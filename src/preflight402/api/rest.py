@@ -1,6 +1,10 @@
 from fastapi import FastAPI
 
 from preflight402 import __version__
+from preflight402.config import get_settings
+
+# Resolved at import so misconfiguration fails the boot, not the first request.
+settings = get_settings()
 
 app = FastAPI(
     title="preflight402",
@@ -11,4 +15,4 @@ app = FastAPI(
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
-    return {"status": "ok", "version": __version__}
+    return {"status": "ok", "version": __version__, "environment": settings.environment}

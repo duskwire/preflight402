@@ -12,6 +12,7 @@ def test_healthz_returns_ok() -> None:
     body = resp.json()
     assert body["status"] == "ok"
     assert body["version"] == __version__
+    assert body["environment"] in ("dev", "prod")
 
 
 def test_unknown_route_is_404() -> None:
