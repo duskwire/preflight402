@@ -1,0 +1,20 @@
+{
+  "url": "https://tick.hugen.tokyo/tick/latest",
+  "captured_at": "2026-07-14T22:33:07+00:00",
+  "http_status": 402,
+  "headers": {
+    "date": "Tue, 14 Jul 2026 22:33:07 GMT",
+    "content-type": "application/json",
+    "content-length": "782",
+    "connection": "keep-alive",
+    "payment-required": "eyJ4NDAyVmVyc2lvbiI6MiwiZXJyb3IiOiJQYXltZW50IHJlcXVpcmVkIiwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly90aWNrLmh1Z2VuLnRva3lvL3RpY2svbGF0ZXN0IiwiZGVzY3JpcHRpb24iOiJHZXQgcmVhbC10aW1lIEJlc3QgQmlkL0FzayBmb3IgYW55IEZYIHBhaXIsIGFnZ3JlZ2F0ZWQgZnJvbSBtdWx0aXBsZSBpbnN0aXR1dGlvbmFsIGxpcXVpZGl0eSBwcm92aWRlcnMuIDYyLTg4JSB0aWdodGVyIHNwcmVhZHMgdGhhbiBhbnkgc2luZ2xlIHNvdXJjZS4gSW5jbHVkZXMgcXVhbGl0eSBtZXRhZGF0YSAoZnJlc2hfc291cmNlcywgcXVhbGl0eV9zdGF0ZSwgc3ByZWFkX3ZzX3NpbmdsZV9zb3VyY2UpLiBTdXBwb3J0cyAxNCBGWCBwYWlycyBpbmNsdWRpbmcgRVVSVVNELCBVU0RKUFksIEdCUFVTRCwgQVVEVVNELCBBVUROWkQsIGFuZCBYQVVVU0QuIEFJIGFnZW50IEFQSSBmb3IgZm9yZXggdHJhZGluZyBzaWduYWxzLCBwb3J0Zm9saW8gdmFsdWF0aW9uLCBwcmljZSBjb21wYXJpc29uLCBhbmQgYXJiaXRyYWdlIGRldGVjdGlvbi4gQWNjZXB0cyBVU0RDIHBheW1lbnRzIG9uIEJhc2UgYW5kIFNvbGFuYSIsIm1pbWVUeXBlIjoiYXBwbGljYXRpb24vanNvbiJ9LCJhY2NlcHRzIjpbeyJzY2hlbWUiOiJleGFjdCIsIm5ldHdvcmsiOiJlaXAxNTU6ODQ1MyIsImFzc2V0IjoiMHg4MzM1ODlmQ0Q2ZURiNkUwOGY0YzdDMzJENGY3MWI1NGJkQTAyOTEzIiwiYW1vdW50IjoiNTAwMCIsInBheVRvIjoiMHgyOTMyMkVhN0VjQjM0YUE2MTY0Y2IyZGRlQjlDRTY1MDkwMkU0ZjYwIiwibWF4VGltZW91dFNlY29uZHMiOjMwMCwiZXh0cmEiOnsibmFtZSI6IlVTRCBDb2luIiwidmVyc2lvbiI6IjIifX0seyJzY2hlbWUiOiJleGFjdCIsIm5ldHdvcmsiOiJzb2xhbmE6NWV5a3Q0VXNGdjhQOE5KZFRSRXBZMXZ6cUtxWkt2ZHAiLCJhc3NldCI6IkVQakZXZGQ1QXVmcVNTcWVNMnFOMXh6eWJhcEM4RzR3RUdHa1p3eVREdDF2IiwiYW1vdW50IjoiNTAwMCIsInBheVRvIjoiNGR1NEFma3hGdnRxRVdhb1JXcmlmb1NYQ2tudU1wQUdoM0JYckZQRnZYRmgiLCJtYXhUaW1lb3V0U2Vjb25kcyI6MzAwLCJleHRyYSI6eyJmZWVQYXllciI6IkhjM3NkRUFzQ0dRY3BnZml2eXdvZzl1d3RrOGdVQlVaZ3N4ZE1FMUVKeTg4In19XSwiZXh0ZW5zaW9ucyI6eyJiYXphYXIiOnsiaW5mbyI6eyJpbnB1dCI6eyJ0eXBlIjoiaHR0cCIsInF1ZXJ5UGFyYW1zIjp7InN5bWJvbCI6IkVVUlVTRCJ9LCJtZXRob2QiOiJHRVQifSwib3V0cHV0Ijp7InR5cGUiOiJqc29uIiwiZXhhbXBsZSI6eyJzeW1ib2wiOiJFVVJVU0QiLCJiZXN0X2JpZCI6IjEuMTU5MTgiLCJiZXN0X2FzayI6IjEuMTU5MTkiLCJiZXN0X3NwcmVhZCI6IjAuMDAwMDEiLCJzcHJlYWRfdnNfc2luZ2xlX3NvdXJjZSI6Ii03My44JSIsImZyZXNoX3NvdXJjZXMiOjIsInF1YWxpdHlfc3RhdGUiOiJnb29kIiwiaXNfY3Jvc3NlZCI6ZmFsc2UsInNlcSI6NDI4NTd9fX0sInNjaGVtYSI6eyJwcm9wZXJ0aWVzIjp7ImlucHV0Ijp7InJlcXVpcmVkIjpbIm1ldGhvZCJdfX19fX19",
+    "server": "cloudflare",
+    "cf-cache-status": "DYNAMIC",
+    "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=WsLKPUkxeuP464orMEzer5aG4mEeprg8YdLPyjMduC%2BEtPtTIcbrP2AJ5a%2B5cRbzwI7S7OoQTnE%2FJ0%2BernIrSCN0pqkGg7agevZc9K7Wl3x0J4HwChyzuZEQnTxbmiTxYNwL\"}]}",
+    "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+    "cf-ray": "a1b3fcbc3ec3b8b6-SJC",
+    "alt-svc": "h3=\":443\"; ma=86400"
+  },
+  "body": "{\"_notice\":\"Payment required ($0.005 USDC on Base/Solana). Sample below.\",\"_alternatives\":{\"mcp_gateway\":{\"info\":\"Access this and 2300+ x402 APIs via a single MCP server. Payment brokered for you — supports API keys (no wallet), free trial (World ID), or x402.\",\"url\":\"https://mcp.hugen.tokyo/mcp\",\"transport\":\"streamable-http\"},\"api_key\":{\"info\":\"Get a free API key with $0.05 trial credit — no wallet needed\",\"create\":\"POST https://discovery.hugen.tokyo/keys/create\",\"then\":\"Connect to MCP Gateway above, pass key in _meta['api_key']\",\"docs\":\"https://discovery.hugen.tokyo/llms.txt\"}},\"symbol\":\"EURUSD\",\"best_bid\":\"1.15918\",\"best_ask\":\"1.15919\",\"best_spread\":\"0.00001\",\"spread_vs_single_source\":\"-73.8%\",\"fresh_sources\":2,\"quality_state\":\"good\",\"is_crossed\":false,\"seq\":42857}",
+  "body_truncated": false
+}

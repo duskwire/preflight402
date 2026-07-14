@@ -1,0 +1,24 @@
+{
+  "url": "https://blockrun.ai/api/v1/pm/polymarket/markets",
+  "captured_at": "2026-07-14T22:33:06+00:00",
+  "http_status": 402,
+  "headers": {
+    "date": "Tue, 14 Jul 2026 22:33:06 GMT",
+    "content-type": "application/json",
+    "content-length": "357",
+    "connection": "keep-alive",
+    "cf-ray": "a1b3fcb79991f3db-SJC",
+    "cf-cache-status": "DYNAMIC",
+    "server": "cloudflare",
+    "vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch",
+    "www-authenticate": "X402 requirements=\"eyJ4NDAyVmVyc2lvbiI6MiwiYWNjZXB0cyI6W3sic2NoZW1lIjoiZXhhY3QiLCJuZXR3b3JrIjoiZWlwMTU1Ojg0NTMiLCJhbW91bnQiOiIzMDAwIiwiYXNzZXQiOiIweDgzMzU4OWZDRDZlRGI2RTA4ZjRjN0MzMkQ0ZjcxYjU0YmRBMDI5MTMiLCJwYXlUbyI6IjB4NkUwMDc3MzE4NzBFRGU0MTlDZkIzMTg4OUNkNUM0NDkzQ0VjYjA0YyIsIm1heFRpbWVvdXRTZWNvbmRzIjozMDAsImV4dHJhIjp7Im5hbWUiOiJVU0QgQ29pbiIsInZlcnNpb24iOiIyIn19XSwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9ibG9ja3J1bi5haS9hcGkvdjEvcG0vcG9seW1hcmtldC9tYXJrZXRzIiwiZGVzY3JpcHRpb24iOiJRdWVyeSBQb2x5bWFya2V0IG1hcmtldHMgd2l0aCBmaWx0ZXJpbmcsIHNvcnRpbmcsIGFuZCBwYWdpbmF0aW9uIiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9qc29uIn0sImV4dGVuc2lvbnMiOnsiYmF6YWFyIjp7InNjaGVtYSI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJpbnB1dCI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJib2R5Ijp7InR5cGUiOiJvYmplY3QiLCJyZXF1aXJlZCI6W10sInByb3BlcnRpZXMiOnt9fX19LCJvdXRwdXQiOnsidHlwZSI6Im9iamVjdCIsInByb3BlcnRpZXMiOnsiZXhhbXBsZSI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJkYXRhIjp7InR5cGUiOiJvYmplY3QifX19fX19fSwiaW5mbyI6eyJpbnB1dCI6eyJ0eXBlIjoiaHR0cCIsIm1ldGhvZCI6IkdFVCIsImRpc2NvdmVyYWJsZSI6dHJ1ZSwiYm9keUZpZWxkcyI6e319LCJvdXRwdXQiOm51bGx9fX19\"",
+    "alt-svc": "h3=\":443\"; ma=86400",
+    "payment-required": "eyJ4NDAyVmVyc2lvbiI6MiwiYWNjZXB0cyI6W3sic2NoZW1lIjoiZXhhY3QiLCJuZXR3b3JrIjoiZWlwMTU1Ojg0NTMiLCJhbW91bnQiOiIzMDAwIiwiYXNzZXQiOiIweDgzMzU4OWZDRDZlRGI2RTA4ZjRjN0MzMkQ0ZjcxYjU0YmRBMDI5MTMiLCJwYXlUbyI6IjB4NkUwMDc3MzE4NzBFRGU0MTlDZkIzMTg4OUNkNUM0NDkzQ0VjYjA0YyIsIm1heFRpbWVvdXRTZWNvbmRzIjozMDAsImV4dHJhIjp7Im5hbWUiOiJVU0QgQ29pbiIsInZlcnNpb24iOiIyIn19XSwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9ibG9ja3J1bi5haS9hcGkvdjEvcG0vcG9seW1hcmtldC9tYXJrZXRzIiwiZGVzY3JpcHRpb24iOiJRdWVyeSBQb2x5bWFya2V0IG1hcmtldHMgd2l0aCBmaWx0ZXJpbmcsIHNvcnRpbmcsIGFuZCBwYWdpbmF0aW9uIiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9qc29uIn0sImV4dGVuc2lvbnMiOnsiYmF6YWFyIjp7InNjaGVtYSI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJpbnB1dCI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJib2R5Ijp7InR5cGUiOiJvYmplY3QiLCJyZXF1aXJlZCI6W10sInByb3BlcnRpZXMiOnt9fX19LCJvdXRwdXQiOnsidHlwZSI6Im9iamVjdCIsInByb3BlcnRpZXMiOnsiZXhhbXBsZSI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJkYXRhIjp7InR5cGUiOiJvYmplY3QifX19fX19fSwiaW5mbyI6eyJpbnB1dCI6eyJ0eXBlIjoiaHR0cCIsIm1ldGhvZCI6IkdFVCIsImRpc2NvdmVyYWJsZSI6dHJ1ZSwiYm9keUZpZWxkcyI6e319LCJvdXRwdXQiOm51bGx9fX19",
+    "x-cloud-trace-context": "ae9eda88a09fc7439ca31084959f8a04",
+    "x-payment-required": "eyJ4NDAyVmVyc2lvbiI6MiwiYWNjZXB0cyI6W3sic2NoZW1lIjoiZXhhY3QiLCJuZXR3b3JrIjoiZWlwMTU1Ojg0NTMiLCJhbW91bnQiOiIzMDAwIiwiYXNzZXQiOiIweDgzMzU4OWZDRDZlRGI2RTA4ZjRjN0MzMkQ0ZjcxYjU0YmRBMDI5MTMiLCJwYXlUbyI6IjB4NkUwMDc3MzE4NzBFRGU0MTlDZkIzMTg4OUNkNUM0NDkzQ0VjYjA0YyIsIm1heFRpbWVvdXRTZWNvbmRzIjozMDAsImV4dHJhIjp7Im5hbWUiOiJVU0QgQ29pbiIsInZlcnNpb24iOiIyIn19XSwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9ibG9ja3J1bi5haS9hcGkvdjEvcG0vcG9seW1hcmtldC9tYXJrZXRzIiwiZGVzY3JpcHRpb24iOiJRdWVyeSBQb2x5bWFya2V0IG1hcmtldHMgd2l0aCBmaWx0ZXJpbmcsIHNvcnRpbmcsIGFuZCBwYWdpbmF0aW9uIiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9qc29uIn0sImV4dGVuc2lvbnMiOnsiYmF6YWFyIjp7InNjaGVtYSI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJpbnB1dCI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJib2R5Ijp7InR5cGUiOiJvYmplY3QiLCJyZXF1aXJlZCI6W10sInByb3BlcnRpZXMiOnt9fX19LCJvdXRwdXQiOnsidHlwZSI6Im9iamVjdCIsInByb3BlcnRpZXMiOnsiZXhhbXBsZSI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJkYXRhIjp7InR5cGUiOiJvYmplY3QifX19fX19fSwiaW5mbyI6eyJpbnB1dCI6eyJ0eXBlIjoiaHR0cCIsIm1ldGhvZCI6IkdFVCIsImRpc2NvdmVyYWJsZSI6dHJ1ZSwiYm9keUZpZWxkcyI6e319LCJvdXRwdXQiOm51bGx9fX19",
+    "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=ScDX1uzt6gHy3zSQHWzuCPLbY%2FVP3vOF4UtUvw3cEcsrXfUtNFIROYrpYq4eY%2FdpA37VWk%2FCMJKY4j3dJEk6il8kkwH8mmOA%2FYMQ1QFzPQvPecyNJ4H12mPvoIFy9Q%3D%3D\"}]}",
+    "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}"
+  },
+  "body": "{\"error\":\"Payment Required\",\"message\":\"This endpoint requires x402 payment\",\"endpoint\":\"/api/v1/pm/polymarket/markets\",\"method\":\"GET\",\"description\":\"Query Polymarket markets with filtering, sorting, and pagination\",\"category\":\"polymarket\",\"price\":{\"amount\":\"0.0010\",\"currency\":\"USD\"},\"tier\":1,\"paymentInfo\":{\"network\":\"base\",\"asset\":\"USDC\",\"x402Version\":2}}",
+  "body_truncated": false
+}
