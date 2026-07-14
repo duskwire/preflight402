@@ -25,8 +25,10 @@ CREATE TABLE probes (
     id             INTEGER PRIMARY KEY,
     endpoint_id    INTEGER NOT NULL REFERENCES endpoints(id) ON DELETE CASCADE,
     probed_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    ok             INTEGER NOT NULL,            -- 1 = got an HTTP response
-    error          TEXT,                        -- timeout | dns | tls | conn_refused | ... when ok=0
+    ok             INTEGER NOT NULL,            -- 1 = status line + headers arrived
+    error          TEXT,                        -- timeout | dns | tls | conn_refused | protocol |
+                                                -- unknown. With ok=0: why no response; with ok=1:
+                                                -- a body-read failure after headers arrived
     http_status    INTEGER,
     latency_ms     REAL,
     tls_valid      INTEGER,

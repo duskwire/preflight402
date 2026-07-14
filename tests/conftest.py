@@ -31,3 +31,9 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in list(os.environ):
         if key.upper().startswith("PREFLIGHT402_"):
             monkeypatch.delenv(key)
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    """Async tests (@pytest.mark.anyio) run on asyncio only."""
+    return "asyncio"
