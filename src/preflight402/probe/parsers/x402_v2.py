@@ -18,73 +18,20 @@ import json
 import math
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
 from typing import Any
+
+from preflight402.probe.parsers.types import (
+    ATOMIC_AMOUNT,
+    ParsedPaymentRequired,
+    PaymentOption,
+    required_str,
+)
 
 HEADER = "payment-required"
 KNOWN_SCHEMES = frozenset({"exact", "upto", "batch-settlement"})
 # CAIP-2: namespace 3-8 chars [-a-z0-9], reference 1-32 chars [-_a-zA-Z0-9]
 _CAIP2 = re.compile(r"^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$")
-_ATOMIC_AMOUNT = re.compile(r"^[0-9]+$")
 
-
-
-@dataclass(slots=True)
-class PaymentOption:
-    """One accepts[] entry, normalized."""
-
-    scheme: str | None
-    network: str | None
-    amount: str | None  # atomic units, decimal string
-    asset: str | None
-    pay_to: str | None
-    max_timeout_seconds: float | None
-    extra: dict[str, Any] | None = None
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "scheme": self.scheme,
-            "network": self.network,
-            "amount": self.amount,
-            "asset": self.asset,
-            "pay_to": self.pay_to,
-            "max_timeout_seconds": self.max_timeout_seconds,
-            "extra": self.extra,
-        }
-
-
-@dataclass(slots=True)
-class ParsedPaymentRequired:
-    """A v2 payment-required payload plus every spec deviation seen."""
-
-    version: int | None
-    source: str  # "header" | "body"
-    resource_url: str | None
-    error: str | None
-    accepts: list[PaymentOption] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-
-    @property
-    def spec_compliant(self) -> bool:
-        return not self.warnings
-
-    @property
-    def networks(self) -> list[str]:
-        seen: list[str] = []
-        for option in self.accepts:
-            if option.network and option.network not in seen:
-                seen.append(option.network)
-        return seen
-
-    def as_db_payment(self) -> dict[str, Any]:
-        """The probes.payment JSON column value."""
-        return {
-            "protocol": "x402-v2",
-            "source": self.source,
-            "resource": self.resource_url,
-            "networks": self.networks,
-            "accepts": [option.as_dict() for option in self.accepts],
-        }
 
 
 def parse_payment_required(
@@ -116,8 +63,12 @@ def parse_payment_required(
                     warnings=warnings,
                 )
             return None
-        if header_raw is None and body_payload.get("x402Version") == 1:
-            return None  # x402 v1 — the sibling parser's job
+        if body_payload.get("x402Version") == 1:
+            # x402 v1 — the sibling parser's job, even when an undecodable
+            # PAYMENT-REQUIRED header exists: grading a valid v1 body against
+            # v2 rules would spray spurious warnings (detect() re-attaches
+            # the broken-header evidence on the v1 result).
+            return None
         payload = body_payload
         source = "body"
         if header_raw is None:
@@ -224,16 +175,16 @@ def _parse_accept(entry: dict[str, Any], index: int, warnings: list[str]) -> Pay
     # Every required field warns when absent AND when present but mistyped
     # (null included) — a nulled-out field with no warning would grade a
     # garbage entry as spec-compliant.
-    scheme = _required_str(entry, index, "scheme", warnings)
+    scheme = required_str(entry, index, "scheme", warnings)
     if scheme is not None and scheme not in KNOWN_SCHEMES:
         warnings.append(f"accepts[{index}].scheme {scheme!r} is not a known scheme")
 
-    network = _required_str(entry, index, "network", warnings)
+    network = required_str(entry, index, "network", warnings)
     if network is not None and not _CAIP2.match(network):
         warnings.append(f"accepts[{index}].network {network!r} is not CAIP-2")
 
-    asset = _required_str(entry, index, "asset", warnings)
-    pay_to = _required_str(entry, index, "payTo", warnings)
+    asset = required_str(entry, index, "asset", warnings)
+    pay_to = required_str(entry, index, "payTo", warnings)
     amount = _parse_amount(entry, index, warnings)
 
     timeout: Any = None
@@ -269,18 +220,6 @@ def _parse_accept(entry: dict[str, Any], index: int, warnings: list[str]) -> Pay
     )
 
 
-def _required_str(
-    entry: dict[str, Any], index: int, name: str, warnings: list[str]
-) -> str | None:
-    if name not in entry:
-        warnings.append(f"accepts[{index}].{name} missing (required)")
-        return None
-    value = entry[name]
-    if not isinstance(value, str) or not value:
-        warnings.append(f"accepts[{index}].{name} {value!r} is not a non-empty string")
-        return None
-    return value
-
 
 def _parse_amount(entry: dict[str, Any], index: int, warnings: list[str]) -> str | None:
     raw = entry.get("amount")
@@ -305,7 +244,7 @@ def _parse_amount(entry: dict[str, Any], index: int, warnings: list[str]) -> str
     if not isinstance(raw, str):
         warnings.append(f"accepts[{index}].amount {raw!r} is not an atomic-units string")
         return None
-    if not _ATOMIC_AMOUNT.match(raw):
+    if not ATOMIC_AMOUNT.match(raw):
         # Malformed strings are preserved (warn-and-keep) so downstream can
         # still show what the server asked for.
         warnings.append(f"accepts[{index}].amount {raw!r} is not an atomic-units string")
