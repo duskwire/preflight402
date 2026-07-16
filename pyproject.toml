@@ -11,7 +11,11 @@ dependencies = [
     "httpx>=0.27",
     "pydantic-settings>=2.6",
     "cryptography>=43",
+    "mcp[cli]>=1.28,<2",
 ]
+
+[project.scripts]
+preflight402-mcp = "preflight402.api.mcp_server:main"
 
 [dependency-groups]
 dev = [

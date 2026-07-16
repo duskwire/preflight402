@@ -13,7 +13,47 @@ reputation) via x402 micropayments.
 
 ## Status
 
-M0 — scaffold. Nothing to see here yet.
+Free preflight engine complete (M1): probe → 402 parse (x402 v1/v2 + MPP
+detection) → verdict → `trust-preview.v1`, over REST and MCP. Paid depth
+(history, reseller detection, ERC-8004 reputation) is next.
+
+## Use it
+
+### As an MCP tool (no wallet, no key)
+
+The `preflight` tool takes a `url` and returns a `trust-preview.v1` verdict.
+
+Until the package is published to PyPI (M2.3), run it from a local checkout.
+Claude Code — one line (point `--directory` at your clone):
+
+```sh
+claude mcp add preflight402 -- uv run --directory /path/to/preflight402 preflight402-mcp
+```
+
+Claude Desktop — add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "preflight402": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/preflight402", "preflight402-mcp"]
+    }
+  }
+}
+```
+
+Once published, that becomes `uvx --from preflight402 preflight402-mcp` (no clone
+needed). Either way, run it as a hosted HTTP server with
+`preflight402-mcp --transport streamable-http` (serves the same tool at
+`http://<host>:8000/mcp`).
+
+### As a REST call
+
+```sh
+uv run uvicorn preflight402.api.rest:app          # serve on :8000
+curl 'http://localhost:8000/preflight?url=https://api.example.com/paid'
+```
 
 ## Development
 
