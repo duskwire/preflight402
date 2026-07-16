@@ -37,6 +37,7 @@ USER_AGENT = "preflight402-probe/0.1 (+https://github.com/chadander/preflight402
 class ProbeResult:
     url: str
     ok: bool  # status line + headers arrived, whatever the status
+    method: str = "GET"  # the method that produced this result (POST on 405 fallback)
     # With ok=False: why no response arrived. With ok=True: a body-read
     # failure after headers arrived (status/headers/partial body retained).
     error: str | None = None  # timeout | dns | tls | conn_refused | protocol | unknown
@@ -62,11 +63,16 @@ class ProbeResult:
 
 
 async def probe(url: str, *, timeout_s: float = 10.0) -> ProbeResult:
-    """GET the URL once (no redirects followed) and capture what happened.
+    """GET the URL (no redirects followed) and capture what happened.
+
+    A meaningful share of live x402 endpoints only answer POST and 405 a GET,
+    so a GET that returns 405 is retried once with an empty JSON POST — the
+    unpaid request returns the 402 challenge without being processed — and
+    that result is kept when it reveals a 402.
 
     Never raises for network-level failures — they come back classified in
     ProbeResult.error. TLS inspection runs as its own handshake, concurrent
-    with the GET, so certificate details survive even when the GET dies on a
+    with the request, so certificate details survive even when it dies on a
     verification error.
     """
     try:
@@ -81,7 +87,11 @@ async def probe(url: str, *, timeout_s: float = 10.0) -> ProbeResult:
     if parts.scheme == "https" and host:
         tls_task = asyncio.ensure_future(inspect_tls(host, port, timeout_s=timeout_s))
     try:
-        result = await _get(url, timeout_s)
+        result = await _request("GET", url, timeout_s)
+        if result.ok and result.http_status == 405:
+            post = await _request("POST", url, timeout_s, json_probe=True)
+            if post.ok and post.http_status == 402:
+                result = post
     finally:
         # The GET can fail fast (e.g. DNS); still collect the TLS side. The
         # task must never propagate out of this finally, whatever it throws.
@@ -96,8 +106,16 @@ async def probe(url: str, *, timeout_s: float = 10.0) -> ProbeResult:
     return result
 
 
-async def _get(url: str, timeout_s: float) -> ProbeResult:
+async def _request(
+    method: str, url: str, timeout_s: float, *, json_probe: bool = False
+) -> ProbeResult:
     started = time.monotonic()
+    request_kwargs: dict[str, Any] = {}
+    if json_probe:
+        # Minimal empty JSON body for the POST fallback: the x402 challenge is
+        # returned pre-payment, so the request is never actually processed.
+        request_kwargs["content"] = b"{}"
+        request_kwargs["headers"] = {"content-type": "application/json"}
     try:
         async with httpx.AsyncClient(
             timeout=timeout_s,
@@ -107,7 +125,7 @@ async def _get(url: str, timeout_s: float) -> ProbeResult:
             # Client construction loads the CA bundle (~30ms); restart the
             # timer so latency_ms measures the endpoint, not this process.
             started = time.monotonic()
-            async with client.stream("GET", url) as response:
+            async with client.stream(method, url, **request_kwargs) as response:
                 raw = bytearray()
                 truncated = False
                 error = detail = None
@@ -126,6 +144,7 @@ async def _get(url: str, timeout_s: float) -> ProbeResult:
                 return ProbeResult(
                     url=url,
                     ok=True,
+                    method=method,
                     error=error,
                     error_detail=detail,
                     http_status=response.status_code,
@@ -139,6 +158,7 @@ async def _get(url: str, timeout_s: float) -> ProbeResult:
         return ProbeResult(
             url=url,
             ok=False,
+            method=method,
             error=kind,
             error_detail=detail,
             latency_ms=(time.monotonic() - started) * 1000,

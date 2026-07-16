@@ -96,6 +96,7 @@ def build_trust_preview(
         },
         "health": {
             "status": "up" if probe.ok else "down",
+            "method": probe.method,  # GET, or POST when the endpoint 405s a GET
             "latency_ms": round(probe.latency_ms, 1) if probe.latency_ms is not None else None,
             "error": probe.error,
             "ssl": (

@@ -20,3 +20,7 @@ build/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# validation sweep outputs (transient)
+scripts/validation-report.json
+scripts/validation-anomalies/
