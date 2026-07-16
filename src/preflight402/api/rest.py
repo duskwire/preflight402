@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 from preflight402 import __version__
@@ -9,6 +9,10 @@ from preflight402.service import get_preflight
 # Resolved at import so misconfiguration fails the boot, not the first request.
 settings = get_settings()
 
+# Routes live on a router so the deployment app (api.app) can serve the same
+# REST surface alongside the MCP mount without duplicating definitions.
+router = APIRouter()
+
 app = FastAPI(
     title="preflight402",
     description="One free call before your agent pays.",
@@ -16,12 +20,12 @@ app = FastAPI(
 )
 
 
-@app.get("/healthz")
+@router.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok", "version": __version__, "environment": settings.environment}
 
 
-@app.get("/preflight")
+@router.get("/preflight")
 async def preflight(url: str) -> JSONResponse:
     """One free call before your agent pays: the trust-preview.v1 verdict.
 
@@ -33,3 +37,6 @@ async def preflight(url: str) -> JSONResponse:
     except queries.InvalidURLError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return JSONResponse(result.document, headers={"x-preflight-cache": result.cache_state})
+
+
+app.include_router(router)

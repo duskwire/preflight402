@@ -17,8 +17,15 @@ FROM python:3.12-slim-bookworm
 RUN groupadd --system app && useradd --system --gid app app
 WORKDIR /app
 COPY --from=builder --chown=app:app /app /app
-ENV PATH="/app/.venv/bin:$PATH"
+# Create the data dir owned by app IN THE IMAGE so a named volume mounted at
+# /data inherits app ownership (Docker seeds a fresh named volume from the
+# image path). Without this the volume is root-owned and every /preflight
+# 500s on "unable to open database file" while /healthz still passes.
+RUN mkdir -p /data && chown app:app /data
+ENV PATH="/app/.venv/bin:$PATH" \
+    PREFLIGHT402_DB_PATH=/data/preflight402.db
 USER app
+VOLUME ["/data"]
 
-EXPOSE 8000
-CMD ["uvicorn", "preflight402.api.rest:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8402
+CMD ["uvicorn", "preflight402.api.app:app", "--host", "0.0.0.0", "--port", "8402"]

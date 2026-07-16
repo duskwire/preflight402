@@ -1,0 +1,15 @@
+# Pings a dead-man's-switch monitor (healthchecks.io) iff the local server
+# answers /healthz. No-op until HEALTHCHECK_PING_URL is set in
+# /etc/default/preflight402 — create a free check at https://healthchecks.io
+# and paste its ping URL there.
+[Unit]
+Description=preflight402 uptime ping
+After=preflight402.service
+
+[Service]
+Type=oneshot
+User=preflight402
+EnvironmentFile=/etc/default/preflight402
+ExecStart=/bin/sh -c '[ -z "$HEALTHCHECK_PING_URL" ] && exit 0; \
+    curl -fsS -m 10 http://127.0.0.1:8402/healthz >/dev/null && \
+    curl -fsS -m 10 -o /dev/null "$HEALTHCHECK_PING_URL"'

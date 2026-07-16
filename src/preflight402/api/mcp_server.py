@@ -16,6 +16,7 @@ import argparse
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 from starlette.applications import Starlette
 
@@ -35,6 +36,11 @@ mcp = FastMCP(
     # A trust check holds no per-client state, so stateless HTTP scales freely.
     stateless_http=True,
     json_response=True,
+    # DNS-rebinding protection guards localhost servers with ambient trust;
+    # this is a public API served under arbitrary hosts/domains with no
+    # ambient auth, where the default localhost-only allowlist would 421
+    # every real deployment request.
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 

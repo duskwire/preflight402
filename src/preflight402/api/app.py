@@ -1,0 +1,57 @@
+"""The deployment ASGI app: REST and MCP on one port.
+
+    /healthz, /preflight   REST (api.rest)
+    /mcp                   MCP streamable-http (api.mcp_server)
+
+The MCP session manager must be running for /mcp to answer, which is why this
+module wires it into the FastAPI lifespan. Serve with:
+
+    uvicorn preflight402.api.app:app --host 0.0.0.0 --port 8402
+
+Note: the MCP session manager can only be started once per FastMCP instance,
+so create_app() is meant to be called once per process (module import does
+it); tests share one client context.
+"""
+
+from __future__ import annotations
+
+import contextlib
+from collections.abc import AsyncIterator
+
+from fastapi import FastAPI
+
+from preflight402 import __version__
+from preflight402.api import rest
+from preflight402.api.mcp_server import mcp
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+    async with mcp.session_manager.run():
+        yield
+
+
+def create_app() -> FastAPI:
+    application = FastAPI(
+        title="preflight402",
+        description="One free call before your agent pays.",
+        version=__version__,
+        lifespan=_lifespan,
+    )
+    application.include_router(rest.router)
+    # Mount the MCP app at /mcp (not "/"), with its internal path at the mount
+    # root, so it owns exactly the /mcp subtree. Mounting at "/" would
+    # full-match every path and rob the REST routes of FastAPI's 405, trailing-
+    # slash redirect, and JSON-404 behavior. The path is baked into the app's
+    # routes at build time, so set-build-restore leaves the shared FastMCP
+    # settings untouched for the standalone server (which serves at /mcp).
+    original_path = mcp.settings.streamable_http_path
+    mcp.settings.streamable_http_path = "/"
+    try:
+        application.mount("/mcp", mcp.streamable_http_app())
+    finally:
+        mcp.settings.streamable_http_path = original_path
+    return application
+
+
+app = create_app()

@@ -1,0 +1,29 @@
+# preflight402 — REST (/healthz, /preflight) + MCP (/mcp) on one port.
+# Install: /etc/systemd/system/preflight402.service
+[Unit]
+Description=preflight402 trust-preview server (REST + MCP)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+User=preflight402
+Group=preflight402
+EnvironmentFile=/etc/default/preflight402
+WorkingDirectory=/var/lib/preflight402
+ExecStart=/opt/preflight402/venv/bin/uvicorn preflight402.api.app:app --host 0.0.0.0 --port 8402
+Restart=on-failure
+RestartSec=3
+
+# Hardening: the process only needs its venv (read) and its data dir (write).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/preflight402
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
