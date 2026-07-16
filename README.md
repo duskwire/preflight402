@@ -23,7 +23,14 @@ detection) → verdict → `trust-preview.v1`, over REST and MCP. Paid depth
 
 The `preflight` tool takes a `url` and returns a `trust-preview.v1` verdict.
 
-Until the package is published to PyPI (M2.3), run it from a local checkout.
+Easiest — point any MCP client at the hosted instance, no install:
+
+```
+https://preflight402.ironshell.io/mcp   (streamable-http)
+```
+
+Or run it yourself. Until the package is published to PyPI (M2.3), run it
+from a local checkout.
 Claude Code — one line (point `--directory` at your clone):
 
 ```sh
@@ -50,9 +57,17 @@ needed). Either way, run it as a hosted HTTP server with
 
 ### As a REST call
 
+The hosted instance also serves REST:
+
 ```sh
-uv run uvicorn preflight402.api.rest:app          # serve on :8000
-curl 'http://localhost:8000/preflight?url=https://api.example.com/paid'
+curl 'https://preflight402.ironshell.io/preflight?url=https://api.example.com/paid'
+```
+
+Or run it yourself (serves REST + MCP on one port):
+
+```sh
+uv run uvicorn preflight402.api.app:app --port 8402
+curl 'http://localhost:8402/preflight?url=https://api.example.com/paid'
 ```
 
 ## Development
