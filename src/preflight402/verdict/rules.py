@@ -256,6 +256,18 @@ def evaluate(
     )
 
 
+@dataclass(slots=True)
+class PricedOffer:
+    """One offer that could be priced in USD (schema assembly reuses these)."""
+
+    usd: float
+    amount: str  # atomic units, as offered on the wire
+    decimals: int
+    network: str | None
+    asset: str | None  # token address, or 'usd' for MPP fiat
+    pay_to: str | None
+
+
 def estimate_price_usd(detection: Detection) -> float | None:
     """Cheapest priceable offer in USD, or None when nothing is recognizable.
 
@@ -267,14 +279,14 @@ def estimate_price_usd(detection: Detection) -> float | None:
     return min(candidates) if candidates else None
 
 
-def _usd_candidates(detection: Detection) -> list[float]:
+def priced_offers(detection: Detection) -> list[PricedOffer]:
     """Every recognizable offer in USD. Hostile amounts never raise or price:
 
     only strict atomic-digit strings are converted (int() would happily read
     '-50', '1_0' or '+5' that the parsers warn-and-preserved), and amounts
     beyond float range (OverflowError, ~309+ digits) are skipped.
     """
-    candidates: list[float] = []
+    offers: list[PricedOffer] = []
     if detection.payment is not None:
         for option in detection.payment.accepts:
             if not (option.amount and option.network and option.asset):
@@ -285,19 +297,43 @@ def _usd_candidates(detection: Detection) -> list[float]:
             if decimals is None:
                 continue
             try:
-                candidates.append(int(option.amount) / 10**decimals)
+                usd = int(option.amount) / 10**decimals
             except OverflowError:
                 continue
+            offers.append(
+                PricedOffer(
+                    usd=usd,
+                    amount=option.amount,
+                    decimals=decimals,
+                    network=option.network,
+                    asset=option.asset,
+                    pay_to=option.pay_to,
+                )
+            )
     for challenge in detection.mpp.challenges:
         if not challenge.amount or (challenge.currency or "").lower() != "usd":
             continue
         if not ATOMIC_AMOUNT.match(challenge.amount):
             continue
         try:
-            candidates.append(int(challenge.amount) / 100)  # base units = cents
+            usd = int(challenge.amount) / 100  # base units = cents
         except OverflowError:
             continue
-    return candidates
+        offers.append(
+            PricedOffer(
+                usd=usd,
+                amount=challenge.amount,
+                decimals=2,
+                network=None,
+                asset="usd",
+                pay_to=challenge.recipient,
+            )
+        )
+    return offers
+
+
+def _usd_candidates(detection: Detection) -> list[float]:
+    return [offer.usd for offer in priced_offers(detection)]
 
 
 def _fmt_usd(value: float) -> str:
