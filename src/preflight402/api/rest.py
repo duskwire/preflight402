@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from preflight402 import __version__
 from preflight402.config import get_settings
 from preflight402.db import queries
+from preflight402.probe.guard import BlockedTargetError
 from preflight402.service import get_preflight
 
 # Resolved at import so misconfiguration fails the boot, not the first request.
@@ -34,6 +35,8 @@ async def preflight(url: str) -> JSONResponse:
     """
     try:
         result = await get_preflight(url, settings)
+    except BlockedTargetError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from None
     except queries.InvalidURLError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return JSONResponse(result.document, headers={"x-preflight-cache": result.cache_state})

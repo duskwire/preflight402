@@ -12,9 +12,11 @@ import asyncio
 from dataclasses import dataclass
 from functools import cache
 from typing import Any
+from urllib.parse import urlsplit
 
 from preflight402.config import Settings
 from preflight402.db import connect, migrate, queries
+from preflight402.probe.guard import assert_public_host
 from preflight402.probe.parsers import detect
 from preflight402.probe.prober import probe
 from preflight402.verdict.rules import evaluate
@@ -36,9 +38,16 @@ async def get_preflight(url: str, settings: Settings) -> PreflightResult:
     """Return the trust-preview.v1 document for a URL, cached and coalesced.
 
     Raises queries.InvalidURLError when the URL is not a plausible http(s)
-    endpoint; callers turn that into their surface's error shape.
+    endpoint, or guard.BlockedTargetError when it resolves to a non-public
+    address (SSRF); callers turn those into their surface's error shape.
     """
     canonical = queries.canonicalize_url(url)
+    parts = urlsplit(canonical)
+    # Reject non-public targets before touching the cache or the network, so a
+    # blocked URL is never probed, cached, or persisted.
+    await assert_public_host(
+        parts.hostname or "", parts.port or 443, allow_private=settings.allow_private_targets
+    )
     ensure_migrated(str(settings.db_path))
 
     cached = _cached_document(canonical, settings)

@@ -22,6 +22,7 @@ from starlette.applications import Starlette
 
 from preflight402.config import get_settings
 from preflight402.db import queries
+from preflight402.probe.guard import BlockedTargetError
 from preflight402.service import get_preflight
 
 settings = get_settings()
@@ -63,6 +64,8 @@ async def preflight(
     """
     try:
         result = await get_preflight(url, settings)
+    except BlockedTargetError as exc:
+        raise ValueError(str(exc)) from None
     except queries.InvalidURLError as exc:
         # A bad URL is a caller error, not a server fault — surface the reason.
         raise ValueError(f"invalid url: {exc}") from None

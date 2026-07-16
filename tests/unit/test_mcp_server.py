@@ -46,7 +46,9 @@ def _v2_probe() -> ProbeResult:
 @pytest.fixture()
 def configured(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
-        mcp_server, "settings", Settings(_env_file=None, db_path=tmp_path / "preflight.db")
+        mcp_server,
+        "settings",
+        Settings(_env_file=None, db_path=tmp_path / "preflight.db", allow_private_targets=True),
     )
     service.ensure_migrated.cache_clear()
 

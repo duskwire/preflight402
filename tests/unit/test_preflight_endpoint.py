@@ -38,8 +38,12 @@ def _v2_headers(amount: str = "10000") -> dict[str, str]:
 
 @pytest.fixture()
 def client(tmp_path: Path, monkeypatch) -> TestClient:
+    # allow_private_targets: these tests use unresolvable example hostnames
+    # with a stubbed prober, so skip the real DNS the SSRF guard would do.
     monkeypatch.setattr(
-        rest, "settings", Settings(_env_file=None, db_path=tmp_path / "preflight.db")
+        rest,
+        "settings",
+        Settings(_env_file=None, db_path=tmp_path / "preflight.db", allow_private_targets=True),
     )
     service.ensure_migrated.cache_clear()
     return TestClient(rest.app)
@@ -163,6 +167,21 @@ def test_invalid_url_is_400(client, probe_stub) -> None:
     response = client.get("/preflight", params={"url": "not a url"})
     assert response.status_code == 400
     assert probe_stub.calls == []
+
+
+def test_ssrf_target_is_403_and_never_probed(tmp_path, monkeypatch, probe_stub) -> None:
+    # With the guard active (allow_private_targets defaults False), a private
+    # target is rejected before the network is touched.
+    monkeypatch.setattr(
+        rest, "settings", Settings(_env_file=None, db_path=tmp_path / "p.db")
+    )
+    service.ensure_migrated.cache_clear()
+    guarded = TestClient(rest.app)
+    for url in ("http://127.0.0.1/admin", "http://192.168.50.1/", "http://169.254.169.254/"):
+        response = guarded.get("/preflight", params={"url": url})
+        assert response.status_code == 403, url
+        assert "non-public" in response.json()["detail"]
+    assert probe_stub.calls == []  # never reached the prober
 
 
 def test_payment_endpoints_are_persisted_with_probe_history(client, probe_stub) -> None:

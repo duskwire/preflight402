@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     helius_api_key: SecretStr | None = None
 
     # --- probing ---
+    # Off in prod: refuse to probe private/loopback/metadata targets so a
+    # public /preflight can't be turned into a LAN/metadata scanner (SSRF).
+    # Turn on for local dev against private x402 endpoints.
+    allow_private_targets: bool = False
     probe_timeout_s: float = 10.0
     probe_concurrency: int = 20
     per_host_min_interval_s: float = 60.0
