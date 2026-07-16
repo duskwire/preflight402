@@ -7,6 +7,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from preflight402 import service
 from preflight402.api import rest
 from preflight402.config import Settings
 from preflight402.db import connect, queries
@@ -40,7 +41,7 @@ def client(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setattr(
         rest, "settings", Settings(_env_file=None, db_path=tmp_path / "preflight.db")
     )
-    rest._ensure_migrated.cache_clear()
+    service.ensure_migrated.cache_clear()
     return TestClient(rest.app)
 
 
@@ -58,7 +59,7 @@ def probe_stub(monkeypatch):
             return self.results.pop(0)
 
     stub = Stub()
-    monkeypatch.setattr(rest, "probe", stub)
+    monkeypatch.setattr(service, "probe", stub)
     return stub
 
 
@@ -217,7 +218,7 @@ async def test_concurrent_cold_requests_probe_once(client, monkeypatch) -> None:
         await asyncio.sleep(0.05)
         return _payment_probe()
 
-    monkeypatch.setattr(rest, "probe", slow_probe)
+    monkeypatch.setattr(service, "probe", slow_probe)
     transport = httpx.ASGITransport(app=rest.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as ac:
         responses = await asyncio.gather(

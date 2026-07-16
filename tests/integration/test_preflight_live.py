@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from preflight402 import service
 from preflight402.api import rest
 from preflight402.config import Settings
 
@@ -19,7 +20,7 @@ def client(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setattr(
         rest, "settings", Settings(_env_file=None, db_path=tmp_path / "preflight.db")
     )
-    rest._ensure_migrated.cache_clear()
+    service.ensure_migrated.cache_clear()
     return TestClient(rest.app)
 
 
