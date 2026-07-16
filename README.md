@@ -3,17 +3,40 @@
 *One free call before your agent pays. Health, authenticity, and Sybil-filtered
 reputation — one verdict, any chain.*
 
-> Working name — final branding decided at M2. The verdict schema name is fixed:
-> **`trust-preview.v1`**.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)
+![MCP](https://img.shields.io/badge/MCP-preflight-8A2BE2.svg)
 
 An endpoint health-checker and trust-preview server for the agent payment
 economy (x402 on Base + Solana). Free preflight with no wallet required; paid
 depth (historical uptime, reseller detection, Sybil-filtered ERC-8004
 reputation) via x402 micropayments.
 
+> Working name — final branding at M2.4. The verdict schema name is fixed:
+> **`trust-preview.v1`**.
+
+## 30-second quickstart
+
+Point any agent at the hosted MCP endpoint — no wallet, no key, no install:
+
+```
+https://preflight402.ironshell.io/mcp
+```
+
+Or check an endpoint over plain HTTP:
+
+```sh
+curl 'https://preflight402.ironshell.io/preflight?url=https://api.example.com/paid'
+```
+
+You get back a `trust-preview.v1` verdict — liveness, TLS, the 402 handshake
+with protocol detection (x402 v1/v2, MPP), a USD price estimate, and a
+**proceed / caution / avoid** recommendation with reasons.
+
 ## Status
 
-Free preflight engine complete (M1): probe → 402 parse (x402 v1/v2 + MPP
+Live at [preflight402.ironshell.io](https://preflight402.ironshell.io). The
+free preflight engine is complete (M1): probe → 402 parse (x402 v1/v2 + MPP
 detection) → verdict → `trust-preview.v1`, over REST and MCP. Paid depth
 (history, reseller detection, ERC-8004 reputation) is next.
 

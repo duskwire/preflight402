@@ -5,6 +5,16 @@ description = "One free call before your agent pays. Health, authenticity, and S
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
+authors = [{ name = "chadander", email = "chadander@gmail.com" }]
+keywords = ["x402", "mcp", "agent-payments", "trust-preview", "402", "web3", "stablecoin"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Security",
+]
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -13,6 +23,11 @@ dependencies = [
     "cryptography>=43",
     "mcp[cli]>=1.28,<2",
 ]
+
+[project.urls]
+Homepage = "https://preflight402.ironshell.io"
+Repository = "https://github.com/chadander/preflight402"
+Issues = "https://github.com/chadander/preflight402/issues"
 
 [project.scripts]
 preflight402-mcp = "preflight402.api.mcp_server:main"
