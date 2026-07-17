@@ -58,24 +58,36 @@ async def test_probe_plain_http_has_no_tls() -> None:
 async def test_probe_retries_post_when_get_is_405(stub_tls) -> None:
     # Many x402 endpoints only answer POST and 405 a GET. The probe must fall
     # back to POST and keep the 402 it reveals, tagged as method=POST.
-    route = respx.route(url="https://api.example.com/pay")
+    # Method-specific routes (not a method-blind route) so the test actually
+    # pins that the retry goes out as a POST.
     payload = {"x402Version": 2, "accepts": [{"payTo": "0xABC"}]}
-    route.side_effect = [
-        httpx.Response(405, headers={"allow": "POST"}),
-        httpx.Response(402, json=payload, headers={"payment-required": "e30="}),
-    ]
+    respx.get("https://api.example.com/pay").mock(
+        return_value=httpx.Response(405, headers={"allow": "POST"})
+    )
+    post_route = respx.post("https://api.example.com/pay").mock(
+        return_value=httpx.Response(402, json=payload, headers={"payment-required": "e30="})
+    )
     result = await probe("https://api.example.com/pay")
     assert result.ok is True
     assert result.http_status == 402
     assert result.method == "POST"
     assert result.error is None
+    # Pin the actual wire request: the empty-JSON body is what makes real x402
+    # endpoints return the 402 pre-processing — a bodyless POST can draw a 400.
+    assert post_route.called
+    sent = post_route.calls.last.request
+    assert sent.method == "POST"
+    assert sent.content == b"{}"
+    assert sent.headers["content-type"] == "application/json"
 
 
 @respx.mock
 async def test_get_405_is_kept_when_post_reveals_no_402(stub_tls) -> None:
     # If POST doesn't produce a 402, the honest GET 405 stands (no misreport).
-    route = respx.route(url="https://api.example.com/x")
-    route.side_effect = [httpx.Response(405), httpx.Response(200, text="ok on post")]
+    respx.get("https://api.example.com/x").mock(return_value=httpx.Response(405))
+    respx.post("https://api.example.com/x").mock(
+        return_value=httpx.Response(200, text="ok on post")
+    )
     result = await probe("https://api.example.com/x")
     assert result.http_status == 405
     assert result.method == "GET"
@@ -85,8 +97,8 @@ async def test_get_405_is_kept_when_post_reveals_no_402(stub_tls) -> None:
 async def test_post_fallback_failure_keeps_the_get_405(stub_tls) -> None:
     # If the POST retry itself fails on the network, the honest GET 405 must
     # stand and probe() must not raise.
-    route = respx.route(url="https://api.example.com/p")
-    route.side_effect = [httpx.Response(405), httpx.ConnectError("boom on post")]
+    respx.get("https://api.example.com/p").mock(return_value=httpx.Response(405))
+    respx.post("https://api.example.com/p").mock(side_effect=httpx.ConnectError("boom"))
     result = await probe("https://api.example.com/p")
     assert result.ok is True
     assert result.http_status == 405
@@ -95,11 +107,14 @@ async def test_post_fallback_failure_keeps_the_get_405(stub_tls) -> None:
 
 @respx.mock
 async def test_get_405_then_post_405_keeps_get(stub_tls) -> None:
-    route = respx.route(url="https://api.example.com/p")
-    route.side_effect = [httpx.Response(405), httpx.Response(405)]
+    respx.get("https://api.example.com/p").mock(return_value=httpx.Response(405))
+    post_route = respx.post("https://api.example.com/p").mock(
+        return_value=httpx.Response(405)
+    )
     result = await probe("https://api.example.com/p")
     assert result.http_status == 405
     assert result.method == "GET"
+    assert post_route.called  # the POST was attempted, just didn't reveal a 402
 
 
 @respx.mock
