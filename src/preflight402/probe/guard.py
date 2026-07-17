@@ -38,9 +38,7 @@ def is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return ip.is_global
 
 
-async def resolve_and_validate(
-    host: str, port: int, *, allow_private: bool = False
-) -> str | None:
+async def resolve_and_validate(host: str, port: int, *, allow_private: bool = False) -> str | None:
     """Resolve `host`, reject any non-public address, return the IP to pin to.
 
     Every resolved address must be public — a host that resolves to both a
@@ -53,9 +51,7 @@ async def resolve_and_validate(
     if allow_private:
         return None
     try:
-        infos = await asyncio.get_running_loop().getaddrinfo(
-            host, port, type=socket.SOCK_STREAM
-        )
+        infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except socket.gaierror:
         return None  # not resolvable — the prober will report this as a dns error
     for info in infos:

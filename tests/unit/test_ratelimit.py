@@ -111,8 +111,13 @@ def limited_client(tmp_path, monkeypatch):
 
     async def fake_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
         return ProbeResult(
-            url=url, ok=True, http_status=200, headers={}, body="hi",
-            latency_ms=10.0, tls=GOOD_TLS,
+            url=url,
+            ok=True,
+            http_status=200,
+            headers={},
+            body="hi",
+            latency_ms=10.0,
+            tls=GOOD_TLS,
         )
 
     monkeypatch.setattr(service, "probe", fake_probe)
@@ -134,18 +139,27 @@ def test_rate_limit_is_per_client_ip(limited_client) -> None:
     # exhaust one IP
     for i in range(3):
         limited_client.get(
-            "/preflight", params={"url": f"https://a{i}.example/"},
+            "/preflight",
+            params={"url": f"https://a{i}.example/"},
             headers={"cf-connecting-ip": "1.1.1.1"},
         )
-    assert limited_client.get(
-        "/preflight", params={"url": "https://a.example/"},
-        headers={"cf-connecting-ip": "1.1.1.1"},
-    ).status_code == 429
+    assert (
+        limited_client.get(
+            "/preflight",
+            params={"url": "https://a.example/"},
+            headers={"cf-connecting-ip": "1.1.1.1"},
+        ).status_code
+        == 429
+    )
     # a different IP is unaffected
-    assert limited_client.get(
-        "/preflight", params={"url": "https://b.example/"},
-        headers={"cf-connecting-ip": "2.2.2.2"},
-    ).status_code == 200
+    assert (
+        limited_client.get(
+            "/preflight",
+            params={"url": "https://b.example/"},
+            headers={"cf-connecting-ip": "2.2.2.2"},
+        ).status_code
+        == 200
+    )
 
 
 def test_healthz_is_not_rate_limited(limited_client) -> None:
@@ -168,8 +182,13 @@ def test_rate_limit_zero_disables(tmp_path, monkeypatch) -> None:
 
     async def fake_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
         return ProbeResult(
-            url=url, ok=True, http_status=200, headers={}, body="hi",
-            latency_ms=10.0, tls=GOOD_TLS,
+            url=url,
+            ok=True,
+            http_status=200,
+            headers={},
+            body="hi",
+            latency_ms=10.0,
+            tls=GOOD_TLS,
         )
 
     monkeypatch.setattr(service, "probe", fake_probe)

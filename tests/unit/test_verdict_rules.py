@@ -324,9 +324,7 @@ def test_expired_tls_via_date_only_and_via_error_only() -> None:
         valid=False, expires_at="2026-07-01T00:00:00.000Z", issuer="X", error="verify failed"
     )
     assert "TLS certificate expired" in _evaluate(_probe(tls=date_only)).reasons
-    error_only = TLSInfo(
-        valid=False, expires_at=None, issuer="X", error="certificate has expired"
-    )
+    error_only = TLSInfo(valid=False, expires_at=None, issuer="X", error="certificate has expired")
     assert "TLS certificate expired" in _evaluate(_probe(tls=error_only)).reasons
 
 

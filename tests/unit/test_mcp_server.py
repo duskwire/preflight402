@@ -101,9 +101,7 @@ async def test_preflight_tool_shares_cache_with_rest_pipeline(configured, stub_p
     results.append(_v2_probe())
     async with create_connected_server_and_client_session(mcp_server.mcp) as session:
         first = await session.call_tool("preflight", {"url": "https://api.example.com/data"})
-        second = await session.call_tool(
-            "preflight", {"url": "HTTPS://api.EXAMPLE.com:443/data"}
-        )
+        second = await session.call_tool("preflight", {"url": "HTTPS://api.EXAMPLE.com:443/data"})
     assert len(calls) == 1
     assert first.structuredContent == second.structuredContent
 
@@ -160,8 +158,15 @@ def test_main_parses_transport_and_port(monkeypatch) -> None:
     monkeypatch.setattr(
         mcp_server.mcp, "run", lambda transport: captured.update(transport=transport)
     )
-    argv = ["preflight402-mcp", "--transport", "streamable-http",
-            "--host", "0.0.0.0", "--port", "9999"]
+    argv = [
+        "preflight402-mcp",
+        "--transport",
+        "streamable-http",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9999",
+    ]
     monkeypatch.setattr("sys.argv", argv)
     mcp_server.main()
     assert captured["transport"] == "streamable-http"

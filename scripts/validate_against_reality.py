@@ -114,9 +114,7 @@ async def run(want: int) -> None:
             host = httpx.URL(url).host
             unclassified_402.append({"url": url, "host": host})
             (OUT_DIR / f"{host}.json").write_text(
-                json.dumps(
-                    {"url": url, "headers": result.headers, "body": result.body}, indent=2
-                )
+                json.dumps({"url": url, "headers": result.headers, "body": result.body}, indent=2)
             )
 
     await asyncio.gather(*(one(u) for u in urls))

@@ -69,9 +69,7 @@ class ParsedPaymentRequired:
         }
 
 
-def required_str(
-    entry: dict[str, Any], index: int, name: str, warnings: list[str]
-) -> str | None:
+def required_str(entry: dict[str, Any], index: int, name: str, warnings: list[str]) -> str | None:
     """Fetch a required string field, warning on absence AND wrong type."""
     if name not in entry:
         warnings.append(f"accepts[{index}].{name} missing (required)")

@@ -148,9 +148,7 @@ def evaluate(
                 # chain end-to-end; a cert-less failure of the separate
                 # inspection handshake (RST, rate limit on the second
                 # connection) is transient noise, not a TLS judgement.
-                caution.append(
-                    f"TLS details unavailable (inspection failed: {probe.tls.error})"
-                )
+                caution.append(f"TLS details unavailable (inspection failed: {probe.tls.error})")
             # else: no certificate was ever seen and the GET already failed —
             # that's the same network failure, not a TLS judgement.
         elif expires_dt is not None:
@@ -158,9 +156,7 @@ def evaluate(
             if days_left < TLS_EXPIRING_SOON_DAYS:
                 # floor(), not round(): a cert 13.7 days out must not read
                 # "expires in 14 days" beside a rule that fired at <14.
-                caution.append(
-                    f"TLS certificate expires in {math.floor(max(days_left, 0))} days"
-                )
+                caution.append(f"TLS certificate expires in {math.floor(max(days_left, 0))} days")
     elif probe.ok:
         caution.append("plain-HTTP endpoint (no TLS)")
 
@@ -217,9 +213,7 @@ def evaluate(
     if first_seen_dt is not None:
         age_days = (now_dt - first_seen_dt).total_seconds() / 86400
         if age_days < NEW_PROVIDER_DAYS:
-            caution.append(
-                f"new provider (first seen {math.floor(max(age_days, 0))} days ago)"
-            )
+            caution.append(f"new provider (first seen {math.floor(max(age_days, 0))} days ago)")
 
     # --- roll up ---
     if avoid:

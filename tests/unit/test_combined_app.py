@@ -70,9 +70,7 @@ def test_rest_semantics_survive_the_mcp_mount(client: TestClient) -> None:
     assert "GET" in wrong_method.headers.get("allow", "")
 
 
-def test_mcp_surface_is_rate_limited_sharing_the_bucket(
-    client: TestClient, monkeypatch
-) -> None:
+def test_mcp_surface_is_rate_limited_sharing_the_bucket(client: TestClient, monkeypatch) -> None:
     # The point of moving to middleware: /mcp — not just /preflight — is
     # rate-limited, debiting the SAME shared bucket, so the tool can't bypass
     # the amplification cap.

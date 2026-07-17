@@ -104,8 +104,7 @@ def _parse_accept(
             or timeout <= 0
         ):
             warnings.append(
-                f"accepts[{index}].maxTimeoutSeconds {timeout!r}"
-                " is not a positive finite number"
+                f"accepts[{index}].maxTimeoutSeconds {timeout!r} is not a positive finite number"
             )
             timeout = None
 
@@ -151,7 +150,5 @@ def _parse_amount(entry: dict[str, Any], index: int, warnings: list[str]) -> str
         warnings.append(f"accepts[{index}].maxAmountRequired {raw!r} is not a string")
         return None
     if not ATOMIC_AMOUNT.match(raw):
-        warnings.append(
-            f"accepts[{index}].maxAmountRequired {raw!r} is not an atomic-units string"
-        )
+        warnings.append(f"accepts[{index}].maxAmountRequired {raw!r} is not an atomic-units string")
     return raw

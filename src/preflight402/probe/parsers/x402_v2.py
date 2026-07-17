@@ -33,7 +33,6 @@ KNOWN_SCHEMES = frozenset({"exact", "upto", "batch-settlement"})
 _CAIP2 = re.compile(r"^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$")
 
 
-
 def parse_payment_required(
     headers: Mapping[str, str], body: str | None
 ) -> ParsedPaymentRequired | None:
@@ -199,8 +198,7 @@ def _parse_accept(entry: dict[str, Any], index: int, warnings: list[str]) -> Pay
             or timeout <= 0
         ):
             warnings.append(
-                f"accepts[{index}].maxTimeoutSeconds {timeout!r}"
-                " is not a positive finite number"
+                f"accepts[{index}].maxTimeoutSeconds {timeout!r} is not a positive finite number"
             )
             timeout = None
 
@@ -218,7 +216,6 @@ def _parse_accept(entry: dict[str, Any], index: int, warnings: list[str]) -> Pay
         max_timeout_seconds=float(timeout) if timeout is not None else None,
         extra=extra,
     )
-
 
 
 def _parse_amount(entry: dict[str, Any], index: int, warnings: list[str]) -> str | None:

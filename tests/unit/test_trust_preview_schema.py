@@ -117,9 +117,7 @@ def test_handshake_compliant_true_only_with_no_warnings() -> None:
 
 
 def test_pure_mpp_deviation_surfaces_in_handshake_compliant() -> None:
-    headers = {
-        "www-authenticate": 'Payment realm="m", method="paypal", amount="1", currency="usd"'
-    }
+    headers = {"www-authenticate": 'Payment realm="m", method="paypal", amount="1", currency="usd"'}
     handshake = _document(headers, body="{}")["health"]["handshake"]
     assert handshake["valid_402"] is True
     assert handshake["spec_compliant"] is False  # not None — deviations exist

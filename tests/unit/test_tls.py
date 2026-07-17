@@ -88,9 +88,7 @@ async def test_pinned_ip_connects_and_verifies_against_hostname(
     assert info.issuer == "preflight402 test CA"
 
 
-async def test_pinned_ip_is_actually_used_for_the_connection(
-    tls_server: int, ca_file: str
-) -> None:
+async def test_pinned_ip_is_actually_used_for_the_connection(tls_server: int, ca_file: str) -> None:
     # Pin to a loopback IP with no listener: 'localhost' resolves fine to
     # 127.0.0.1 (where the server IS), but the pin must win, so the connection
     # fails — proving the IP, not the hostname, drives the socket.

@@ -317,8 +317,13 @@ def test_expired_cache_rows_are_purged_on_miss(client, probe_stub) -> None:
         conn.close()
     probe_stub.results.append(
         ProbeResult(
-            url="https://junk9.example/", ok=True, http_status=200, headers={},
-            body="x", latency_ms=10.0, tls=GOOD_TLS,
+            url="https://junk9.example/",
+            ok=True,
+            http_status=200,
+            headers={},
+            body="x",
+            latency_ms=10.0,
+            tls=GOOD_TLS,
         )
     )
     client.get("/preflight", params={"url": "https://junk9.example/"})

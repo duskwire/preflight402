@@ -137,8 +137,10 @@ def test_space_separated_params_degrade_loudly_not_silently() -> None:
 
 def test_pre_scheme_garbage_warns() -> None:
     result = parse_mpp(
-        {"www-authenticate": 'realm="orphan", Payment method="tempo", intent="charge", '
-                             'amount="1", recipient="0x1"'}
+        {
+            "www-authenticate": 'realm="orphan", Payment method="tempo", intent="charge", '
+            'amount="1", recipient="0x1"'
+        }
     )
     assert result.mpp_capable
     assert any("before any scheme" in w for w in result.warnings)
@@ -148,8 +150,7 @@ def test_token68_challenge_does_not_corrupt_payment_challenge() -> None:
     # RFC 7235 token68 form (Negotiate/NTLM blobs) must become a separate
     # scheme, not a spurious param-warning on the clean Payment challenge.
     value = (
-        'Payment method="tempo", intent="charge", amount="5", recipient="0x1", '
-        "Negotiate YII+abc=="
+        'Payment method="tempo", intent="charge", amount="5", recipient="0x1", Negotiate YII+abc=='
     )
     result = parse_mpp({"www-authenticate": value})
     (challenge,) = result.challenges
@@ -167,9 +168,11 @@ def test_duplicate_params_warn() -> None:
 def test_numeric_request_amount_coerced_with_warning() -> None:
     import base64
 
-    request = base64.urlsafe_b64encode(
-        json.dumps({"amount": 10000, "recipient": "0xR"}).encode()
-    ).decode().rstrip("=")
+    request = (
+        base64.urlsafe_b64encode(json.dumps({"amount": 10000, "recipient": "0xR"}).encode())
+        .decode()
+        .rstrip("=")
+    )
     value = f'Payment method="tempo", intent="charge", request="{request}"'
     result = parse_mpp({"www-authenticate": value})
     (challenge,) = result.challenges

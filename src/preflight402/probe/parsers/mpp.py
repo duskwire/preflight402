@@ -74,9 +74,7 @@ class MPPResult:
 def parse_mpp(headers: Mapping[str, str]) -> MPPResult:
     """Extract Payment challenges from WWW-Authenticate. Never raises."""
     result = MPPResult()
-    value = next(
-        (v for k, v in headers.items() if k.lower() == "www-authenticate"), None
-    )
+    value = next((v for k, v in headers.items() if k.lower() == "www-authenticate"), None)
     if not value:
         return result
     for scheme, params_raw in _split_challenges(value, result.warnings):
@@ -119,9 +117,7 @@ def _split_challenges(value: str, warnings: list[str]) -> list[tuple[str, str]]:
         elif scheme is not None:
             parts.append(part)
         else:
-            warnings.append(
-                f"WWW-Authenticate part before any scheme ignored: {stripped[:60]!r}"
-            )
+            warnings.append(f"WWW-Authenticate part before any scheme ignored: {stripped[:60]!r}")
     if scheme is not None:
         challenges.append((scheme, ",".join(parts)))
     return challenges
@@ -196,9 +192,7 @@ def _parse_challenge(params_raw: str, warnings: list[str]) -> MPPChallenge:
         if isinstance(payload_value, str):
             return payload_value
         if isinstance(payload_value, int) and not isinstance(payload_value, bool):
-            warnings.append(
-                f"Payment challenge request {request_key} is a number, not a string"
-            )
+            warnings.append(f"Payment challenge request {request_key} is a number, not a string")
             return str(payload_value)
         return None
 

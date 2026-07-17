@@ -30,9 +30,7 @@ def stub_tls(monkeypatch):
 async def test_probe_records_a_402_response(stub_tls) -> None:
     payload = {"x402Version": 2, "accepts": [{"payTo": "0xABC"}]}
     respx.get("https://api.example.com/data").mock(
-        return_value=httpx.Response(
-            402, json=payload, headers={"x-served-by": "edge-1"}
-        )
+        return_value=httpx.Response(402, json=payload, headers={"x-served-by": "edge-1"})
     )
     result = await probe("https://api.example.com/data")
     assert result.ok is True
@@ -108,9 +106,7 @@ async def test_post_fallback_failure_keeps_the_get_405(stub_tls) -> None:
 @respx.mock
 async def test_get_405_then_post_405_keeps_get(stub_tls) -> None:
     respx.get("https://api.example.com/p").mock(return_value=httpx.Response(405))
-    post_route = respx.post("https://api.example.com/p").mock(
-        return_value=httpx.Response(405)
-    )
+    post_route = respx.post("https://api.example.com/p").mock(return_value=httpx.Response(405))
     result = await probe("https://api.example.com/p")
     assert result.http_status == 405
     assert result.method == "GET"
@@ -331,9 +327,7 @@ async def test_probe_classifies_dns_failure_from_message() -> None:
 
 @respx.mock
 async def test_probe_classifies_connection_refused_from_message() -> None:
-    respx.get("http://localhost:1/").mock(
-        side_effect=httpx.ConnectError("Connection refused")
-    )
+    respx.get("http://localhost:1/").mock(side_effect=httpx.ConnectError("Connection refused"))
     result = await probe("http://localhost:1/")
     assert result.error == "conn_refused"
 
@@ -341,9 +335,7 @@ async def test_probe_classifies_connection_refused_from_message() -> None:
 @respx.mock
 async def test_probe_classifies_tls_failure(stub_tls) -> None:
     respx.get("https://api.example.com/").mock(
-        side_effect=httpx.ConnectError(
-            "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"
-        )
+        side_effect=httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
     )
     result = await probe("https://api.example.com/")
     assert result.error == "tls"
