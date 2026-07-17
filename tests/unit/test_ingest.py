@@ -21,6 +21,15 @@ def settings(tmp_path) -> Settings:
     return Settings(db_path=tmp_path / "ingest-test.db")
 
 
+@pytest.fixture(autouse=True)
+def _no_crawl_delays(monkeypatch) -> None:
+    """Politeness sleeps are real-network behavior; tests must not pay them."""
+    monkeypatch.setattr(bazaar, "PAGE_DELAY_S", 0)
+    monkeypatch.setattr(agentic_market, "PAGE_DELAY_S", 0)
+    monkeypatch.setattr(x402_list, "PAGE_DELAY_S", 0)
+    monkeypatch.setattr(x402_list, "DETAIL_DELAY_S", 0)
+
+
 def fake_source(name: str, *records_or_exc):
     """A stand-in source module yielding the given records, raising exceptions."""
 

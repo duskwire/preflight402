@@ -33,6 +33,7 @@ SOURCE = "x402-list"
 BASE_URL = "https://x402-list.com/api/v1/services"
 PAGE_SIZE = 100
 MAX_PAGES = 50  # 5k services — ~35x the catalog as of 2026-07
+PAGE_DELAY_S = 0.25  # courtesy spacing between list pages
 DETAIL_DELAY_S = 0.35  # 200 req/min limit; stay comfortably under it
 
 
@@ -42,6 +43,8 @@ async def records(
     """Yield one SeedRecord per endpoint of every listed service."""
     yielded = 0
     for page in range(1, MAX_PAGES + 1):
+        if page > 1:
+            await asyncio.sleep(PAGE_DELAY_S)
         response = await client.get(BASE_URL, params={"page": page, "per_page": PAGE_SIZE})
         response.raise_for_status()
         payload = response.json()

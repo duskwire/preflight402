@@ -15,6 +15,7 @@ against a server that repeats non-empty pages with a junk total.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import httpx
@@ -25,6 +26,7 @@ SOURCE = "bazaar"
 BASE_URL = "https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources"
 PAGE_SIZE = 100
 MAX_PAGES = 1000  # 100k records — ~4x the catalog as of 2026-07
+PAGE_DELAY_S = 0.25  # a 254-page burst with no delay tripped CDP's 429 (2026-07-17)
 
 
 async def records(
@@ -33,7 +35,9 @@ async def records(
     """Yield one SeedRecord per http-typed catalog item, paging through all."""
     offset = 0
     yielded = 0
-    for _ in range(MAX_PAGES):
+    for page_index in range(MAX_PAGES):
+        if page_index:
+            await asyncio.sleep(PAGE_DELAY_S)
         response = await client.get(BASE_URL, params={"limit": PAGE_SIZE, "offset": offset})
         response.raise_for_status()
         payload = response.json()

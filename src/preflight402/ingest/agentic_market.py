@@ -12,6 +12,7 @@ bounds the crawl against weird servers.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import httpx
@@ -22,6 +23,7 @@ SOURCE = "agentic.market"
 BASE_URL = "https://api.agentic.market/v1/services"
 PAGE_SIZE = 100
 MAX_PAGES = 200  # 20k services — ~10x the catalog as of 2026-07
+PAGE_DELAY_S = 0.25  # courtesy spacing; Bazaar 429'd an undelayed page burst
 
 
 async def records(
@@ -30,7 +32,9 @@ async def records(
     """Yield one SeedRecord per endpoint of every listed service."""
     offset = 0
     yielded = 0
-    for _ in range(MAX_PAGES):
+    for page_index in range(MAX_PAGES):
+        if page_index:
+            await asyncio.sleep(PAGE_DELAY_S)
         response = await client.get(BASE_URL, params={"limit": PAGE_SIZE, "offset": offset})
         response.raise_for_status()
         payload = response.json()
