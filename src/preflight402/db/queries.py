@@ -45,11 +45,18 @@ def canonicalize_url(url: str) -> str:
     http(s) endpoint; IDN hosts are kept as-is (not punycoded), so encoding
     variants of the same name are distinct endpoints.
     """
-    parts = urlsplit(url.strip())
+    try:
+        parts = urlsplit(url.strip())
+        hostname = parts.hostname
+    except ValueError as exc:
+        # urlsplit itself rejects some hostile shapes (unclosed IPv6 brackets,
+        # NFKC-invalid netloc characters) with a bare ValueError — that must
+        # not escape this function's documented InvalidURLError contract.
+        raise InvalidURLError(f"unparseable URL: {url!r}") from exc
     scheme = parts.scheme.lower()
     if scheme not in _DEFAULT_PORTS:
         raise InvalidURLError(f"not an http(s) URL: {url!r}")
-    host = (parts.hostname or "").lower()
+    host = (hostname or "").lower()
     if not host:
         raise InvalidURLError(f"missing host: {url!r}")
     try:
@@ -92,6 +99,7 @@ def upsert_endpoint(
     *,
     source: str | None = None,
     meta: dict[str, Any] | None = None,
+    source_meta: dict[str, Any] | None = None,
     now: str | None = None,
 ) -> int:
     """Insert an endpoint or merge into the existing row; return its id.
@@ -99,11 +107,27 @@ def upsert_endpoint(
     On conflict the first-discoverer data wins: first_seen_at and existing
     sources are kept, `source` is appended to sources if new, and meta is
     replaced only when a non-None meta is supplied.
+
+    `source_meta` (requires `source`) instead merges under a per-source
+    namespace — meta["bazaar"] = {...} — INSIDE this transaction, so two
+    ingest processes upserting the same URL cannot lose each other's
+    namespace to a read-modify-write race. Mutually exclusive with `meta`.
     """
+    if source_meta is not None:
+        if source is None:
+            raise ValueError("source_meta requires source")
+        if meta is not None:
+            raise ValueError("meta and source_meta are mutually exclusive")
     url = canonicalize_url(url)
     host = urlsplit(url).hostname or ""
     with transaction(conn):
-        row = conn.execute("SELECT id, sources FROM endpoints WHERE url = ?", (url,)).fetchone()
+        row = conn.execute(
+            "SELECT id, sources, meta FROM endpoints WHERE url = ?", (url,)
+        ).fetchone()
+        if source_meta is not None:
+            existing_meta = json.loads(row["meta"]) if row is not None and row["meta"] else None
+            meta = dict(existing_meta) if isinstance(existing_meta, dict) else {}
+            meta[source] = source_meta
         if row is None:
             cursor = conn.execute(
                 "INSERT INTO endpoints (url, host, sources, first_seen_at, meta)"
@@ -122,9 +146,7 @@ def upsert_endpoint(
 
 
 def get_endpoint(conn: sqlite3.Connection, url: str) -> dict[str, Any] | None:
-    row = conn.execute(
-        "SELECT * FROM endpoints WHERE url = ?", (canonicalize_url(url),)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM endpoints WHERE url = ?", (canonicalize_url(url),)).fetchone()
     return _to_dict(row)
 
 
@@ -310,9 +332,7 @@ def get_verdict(
 
 def purge_expired_verdicts(conn: sqlite3.Connection, *, now: str | None = None) -> int:
     """Delete expired cache rows; return how many were removed."""
-    cursor = conn.execute(
-        "DELETE FROM verdict_cache WHERE expires_at <= ?", (now or utcnow_iso(),)
-    )
+    cursor = conn.execute("DELETE FROM verdict_cache WHERE expires_at <= ?", (now or utcnow_iso(),))
     return cursor.rowcount
 
 

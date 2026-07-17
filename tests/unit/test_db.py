@@ -33,8 +33,7 @@ def test_migrate_fresh_db(db) -> None:
     assert db.execute("PRAGMA user_version").fetchone()[0] == 1
     assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     tables = {
-        row["name"]
-        for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
     assert {"endpoints", "probes", "rollups", "verdict_cache"} <= tables
 
@@ -63,9 +62,7 @@ def test_failed_migration_rolls_back(db, tmp_path: Path) -> None:
         migrate(db, db_dir=db_dir)
     assert db.execute("PRAGMA user_version").fetchone()[0] == 1
     assert not db.in_transaction
-    row = db.execute(
-        "SELECT name FROM sqlite_master WHERE name = 'half_done'"
-    ).fetchone()
+    row = db.execute("SELECT name FROM sqlite_master WHERE name = 'half_done'").fetchone()
     assert row is None
     # The connection stays usable and a fixed migration applies cleanly.
     (db_dir / "migrations" / "0002_bad.sql").write_text(
@@ -250,6 +247,10 @@ def test_canonicalize_url_rejects_garbage() -> None:
         "ftp://example.com/x",  # non-http(s) scheme
         "https:///path",  # no host
         "",
+        # urlsplit raises bare ValueError on these; the InvalidURLError
+        # contract must hold anyway (registries and public callers send them)
+        "https://[::1/broken",  # unclosed IPv6 bracket
+        "https://℀.example/",  # NFKC-invalid netloc character (℀ -> a/c)
     ]:
         with pytest.raises(q.InvalidURLError):
             q.canonicalize_url(bad)
@@ -278,7 +279,10 @@ def test_upsert_endpoint_dedupes_url_variants(db) -> None:
 
 def test_upsert_endpoint_merge_semantics(db) -> None:
     endpoint_id = q.upsert_endpoint(
-        db, "https://api.example.com/", source="bazaar", meta={"a": 1},
+        db,
+        "https://api.example.com/",
+        source="bazaar",
+        meta={"a": 1},
         now="2026-07-08T00:00:00.000Z",
     )
     q.upsert_endpoint(
@@ -292,6 +296,38 @@ def test_upsert_endpoint_merge_semantics(db) -> None:
     assert endpoint["meta"] == {"a": 1}  # None meta does not clobber
     q.upsert_endpoint(db, "https://api.example.com/", meta={"b": 2})
     assert q.get_endpoint(db, "https://api.example.com/")["meta"] == {"b": 2}
+
+
+def test_upsert_endpoint_source_meta_merges_namespaces(db) -> None:
+    q.upsert_endpoint(db, "https://api.example.com/", source="bazaar", source_meta={"n": "A"})
+    q.upsert_endpoint(db, "https://api.example.com/", source="x402-list", source_meta={"n": "B"})
+    # replacing one namespace leaves the others intact
+    q.upsert_endpoint(db, "https://api.example.com/", source="bazaar", source_meta={"n": "A2"})
+    # a plain upsert with no meta clobbers nothing
+    q.upsert_endpoint(db, "https://api.example.com/", source="preflight")
+    endpoint = q.get_endpoint(db, "https://api.example.com/")
+    assert endpoint["meta"] == {"bazaar": {"n": "A2"}, "x402-list": {"n": "B"}}
+    assert endpoint["sources"] == ["bazaar", "x402-list", "preflight"]
+
+
+def test_upsert_endpoint_source_meta_survives_non_dict_meta(db) -> None:
+    q.upsert_endpoint(db, "https://api.example.com/", meta={"legacy": True})
+    q.upsert_endpoint(db, "https://api.example.com/", source="bazaar", source_meta={"n": "A"})
+    # namespaced merge starts from the existing dict, keeping foreign keys
+    assert q.get_endpoint(db, "https://api.example.com/")["meta"] == {
+        "legacy": True,
+        "bazaar": {"n": "A"},
+    }
+
+
+def test_upsert_endpoint_source_meta_argument_contract(db) -> None:
+    with pytest.raises(ValueError, match="requires source"):
+        q.upsert_endpoint(db, "https://api.example.com/", source_meta={"n": "A"})
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        q.upsert_endpoint(
+            db, "https://api.example.com/", source="bazaar", meta={"a": 1}, source_meta={"n": "A"}
+        )
+    assert q.list_endpoints(db, enabled_only=False) == []
 
 
 def test_get_endpoint_missing_returns_none(db) -> None:
@@ -444,17 +480,23 @@ def test_verdict_roundtrip_and_expiry(db) -> None:
     # put with a non-canonical spelling, get with the canonical one — both
     # sides must canonicalize for variants to share a cache entry.
     q.put_verdict(
-        db, "HTTPS://api.EXAMPLE.com:443/", "preflight", verdict,
-        ttl_seconds=300, now="2026-07-08T00:00:00.000Z",
+        db,
+        "HTTPS://api.EXAMPLE.com:443/",
+        "preflight",
+        verdict,
+        ttl_seconds=300,
+        now="2026-07-08T00:00:00.000Z",
     )
-    hit = q.get_verdict(
-        db, "https://api.example.com/", "preflight", now="2026-07-08T00:04:59.000Z"
-    )
+    hit = q.get_verdict(db, "https://api.example.com/", "preflight", now="2026-07-08T00:04:59.000Z")
     assert hit["verdict"] == verdict
     assert hit["expires_at"] == "2026-07-08T00:05:00.000Z"
     q.put_verdict(
-        db, "https://API.example.com/", "preflight", {"v": 2},
-        ttl_seconds=300, now="2026-07-08T00:01:00.000Z",
+        db,
+        "https://API.example.com/",
+        "preflight",
+        {"v": 2},
+        ttl_seconds=300,
+        now="2026-07-08T00:01:00.000Z",
     )
     assert db.execute("SELECT COUNT(*) FROM verdict_cache").fetchone()[0] == 1  # upsert, not add
     assert (
