@@ -126,6 +126,26 @@ def test_pure_mpp_deviation_surfaces_in_handshake_compliant() -> None:
     assert handshake["warnings"]
 
 
+def test_health_method_reflects_probe_method() -> None:
+    headers = {"payment-required": _v2_header([_accept("10000", "eip155:8453", USDC_BASE)])}
+    assert _document(headers)["health"]["method"] == "GET"
+    # a POST-fallback probe surfaces method=POST so agents know to POST
+    probe_post = ProbeResult(
+        url="https://api.example.com/data",
+        ok=True,
+        method="POST",
+        http_status=402,
+        headers=headers,
+        body="{}",
+        latency_ms=90.0,
+        tls=GOOD_TLS,
+    )
+    detection = detect(headers, "{}")
+    verdict = evaluate(probe_post, detection, now="2026-07-15T12:00:00.000Z")
+    doc = build_trust_preview("u", probe_post, detection, verdict)
+    assert doc["health"]["method"] == "POST"
+
+
 def test_document_is_strict_json_serializable() -> None:
     headers = {
         "payment-required": _v2_header([_accept("10000", "eip155:8453", USDC_BASE)]),

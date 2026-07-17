@@ -82,6 +82,27 @@ async def test_get_405_is_kept_when_post_reveals_no_402(stub_tls) -> None:
 
 
 @respx.mock
+async def test_post_fallback_failure_keeps_the_get_405(stub_tls) -> None:
+    # If the POST retry itself fails on the network, the honest GET 405 must
+    # stand and probe() must not raise.
+    route = respx.route(url="https://api.example.com/p")
+    route.side_effect = [httpx.Response(405), httpx.ConnectError("boom on post")]
+    result = await probe("https://api.example.com/p")
+    assert result.ok is True
+    assert result.http_status == 405
+    assert result.method == "GET"
+
+
+@respx.mock
+async def test_get_405_then_post_405_keeps_get(stub_tls) -> None:
+    route = respx.route(url="https://api.example.com/p")
+    route.side_effect = [httpx.Response(405), httpx.Response(405)]
+    result = await probe("https://api.example.com/p")
+    assert result.http_status == 405
+    assert result.method == "GET"
+
+
+@respx.mock
 async def test_non_405_get_does_not_trigger_post(stub_tls) -> None:
     mock = respx.get("https://api.example.com/data").mock(
         return_value=httpx.Response(402, json={"x402Version": 2})
