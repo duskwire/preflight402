@@ -62,7 +62,13 @@ class ProbeResult:
         }
 
 
-async def probe(url: str, *, timeout_s: float = 10.0, pinned_ip: str | None = None) -> ProbeResult:
+async def probe(
+    url: str,
+    *,
+    timeout_s: float = 10.0,
+    pinned_ip: str | None = None,
+    enforce_pin: bool = False,
+) -> ProbeResult:
     """GET the URL (no redirects followed) and capture what happened.
 
     A meaningful share of live x402 endpoints only answer POST and 405 a GET,
@@ -89,6 +95,14 @@ async def probe(url: str, *, timeout_s: float = 10.0, pinned_ip: str | None = No
         port = parts.port or 443
     except ValueError as exc:
         return ProbeResult(url=url, ok=False, error=_PROTOCOL, error_detail=str(exc))
+    if enforce_pin and pinned_ip is None and host:
+        # The guard required a validated pin but could not produce one (the
+        # host did not resolve at check time). Re-resolving here would reopen
+        # the rebinding window a hostile DNS server could exploit, so report
+        # unreachable instead of connecting via an unvalidated lookup.
+        return ProbeResult(
+            url=url, ok=False, error=_DNS, error_detail="host did not resolve at validation"
+        )
     tls_task = None
     if parts.scheme == "https" and host:
         tls_task = asyncio.ensure_future(

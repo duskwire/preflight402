@@ -65,7 +65,7 @@ def probe_stub(monkeypatch):
             self.calls: list[str] = []
 
         async def __call__(
-            self, url: str, *, timeout_s: float = 10.0, pinned_ip=None
+            self, url: str, *, timeout_s: float = 10.0, pinned_ip=None, enforce_pin=False
         ) -> ProbeResult:
             self.calls.append(url)
             return self.results.pop(0)
@@ -194,6 +194,29 @@ def test_ssrf_target_is_403_and_never_probed(tmp_path, monkeypatch, probe_stub) 
     assert probe_stub.calls == []  # never reached the prober
 
 
+@pytest.mark.anyio
+async def test_service_wires_the_validated_pin_into_the_probe(tmp_path, monkeypatch) -> None:
+    # The pin is only a control if the service actually threads the validated
+    # IP + enforce flag into probe(). Capture what probe receives.
+    captured = {}
+
+    async def fake_resolve(host, port, *, allow_private):
+        return "203.0.113.5"
+
+    async def fake_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+        captured["pinned_ip"] = pinned_ip
+        captured["enforce_pin"] = enforce_pin
+        return ProbeResult(url=url, ok=True, http_status=200, headers={}, body="x", latency_ms=5.0)
+
+    monkeypatch.setattr(service, "resolve_and_validate", fake_resolve)
+    monkeypatch.setattr(service, "probe", fake_probe)
+    service.ensure_migrated.cache_clear()
+    settings = Settings(_env_file=None, db_path=tmp_path / "p.db")  # allow_private=False
+    await service.get_preflight("https://api.example.com/x", settings)
+    assert captured["pinned_ip"] == "203.0.113.5"
+    assert captured["enforce_pin"] is True
+
+
 def test_payment_endpoints_are_persisted_with_probe_history(client, probe_stub) -> None:
     probe_stub.results.append(_payment_probe())
     client.get("/preflight", params={"url": "https://api.example.com/data"})
@@ -242,7 +265,9 @@ async def test_concurrent_cold_requests_probe_once(client, monkeypatch) -> None:
     # probe and one recorded observation, and agree on the verdict.
     calls: list[str] = []
 
-    async def slow_probe(url: str, *, timeout_s: float = 10.0, pinned_ip=None) -> ProbeResult:
+    async def slow_probe(
+        url: str, *, timeout_s: float = 10.0, pinned_ip=None, enforce_pin=False
+    ) -> ProbeResult:
         calls.append(url)
         await asyncio.sleep(0.05)
         return _payment_probe()

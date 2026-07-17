@@ -109,7 +109,7 @@ def limited_client(tmp_path, monkeypatch):
     monkeypatch.setattr(rest, "_limiter", RateLimiter(per_minute=60, burst=3))
     service.ensure_migrated.cache_clear()
 
-    async def fake_probe(url, *, timeout_s=10.0, pinned_ip=None):
+    async def fake_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
         return ProbeResult(
             url=url, ok=True, http_status=200, headers={}, body="hi",
             latency_ms=10.0, tls=GOOD_TLS,
@@ -151,3 +151,33 @@ def test_rate_limit_is_per_client_ip(limited_client) -> None:
 def test_healthz_is_not_rate_limited(limited_client) -> None:
     for _ in range(10):
         assert limited_client.get("/healthz").status_code == 200
+
+
+def test_rate_limit_zero_disables(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        rest,
+        "settings",
+        Settings(
+            _env_file=None,
+            db_path=tmp_path / "off.db",
+            allow_private_targets=True,
+            rate_limit_per_minute=0,  # disabled
+        ),
+    )
+    monkeypatch.setattr(rest, "_limiter", RateLimiter(per_minute=60, burst=1))
+
+    async def fake_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+        return ProbeResult(
+            url=url, ok=True, http_status=200, headers={}, body="hi",
+            latency_ms=10.0, tls=GOOD_TLS,
+        )
+
+    monkeypatch.setattr(service, "probe", fake_probe)
+    service.ensure_migrated.cache_clear()
+    client = TestClient(rest.app)
+    # even well past burst=1, nothing is limited when the rate is 0
+    codes = [
+        client.get("/preflight", params={"url": f"https://z{i}.example/"}).status_code
+        for i in range(5)
+    ]
+    assert codes == [200, 200, 200, 200, 200]

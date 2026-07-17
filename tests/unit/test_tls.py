@@ -76,6 +76,30 @@ async def test_unreachable_port() -> None:
     assert info.error
 
 
+async def test_pinned_ip_connects_and_verifies_against_hostname(
+    tls_server: int, ca_file: str
+) -> None:
+    # The rebinding-safe pin: connect to the IP but verify the cert against
+    # the hostname (server_hostname stays the name).
+    info = await inspect_tls(
+        "localhost", tls_server, ca_file=ca_file, pinned_ip="127.0.0.1", timeout_s=5
+    )
+    assert info.valid is True
+    assert info.issuer == "preflight402 test CA"
+
+
+async def test_pinned_ip_is_actually_used_for_the_connection(
+    tls_server: int, ca_file: str
+) -> None:
+    # Pin to a loopback IP with no listener: 'localhost' resolves fine to
+    # 127.0.0.1 (where the server IS), but the pin must win, so the connection
+    # fails — proving the IP, not the hostname, drives the socket.
+    info = await inspect_tls(
+        "localhost", tls_server, ca_file=ca_file, pinned_ip="127.0.0.2", timeout_s=3
+    )
+    assert info.valid is False
+
+
 async def test_never_raises_on_idna_garbage() -> None:
     # getaddrinfo raises UnicodeError (not OSError) on a >63-char label —
     # inspection must classify it, not propagate. Hermetic: fails in IDNA

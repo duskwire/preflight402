@@ -10,6 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from preflight402.api import app as app_module
+from preflight402.api import rest
+from preflight402.api.ratelimit import RateLimiter
 
 MCP_HEADERS = {
     "content-type": "application/json",
@@ -66,3 +68,24 @@ def test_rest_semantics_survive_the_mcp_mount(client: TestClient) -> None:
     wrong_method = client.post("/healthz")
     assert wrong_method.status_code == 405
     assert "GET" in wrong_method.headers.get("allow", "")
+
+
+def test_mcp_surface_is_rate_limited_sharing_the_bucket(
+    client: TestClient, monkeypatch
+) -> None:
+    # The point of moving to middleware: /mcp — not just /preflight — is
+    # rate-limited, debiting the SAME shared bucket, so the tool can't bypass
+    # the amplification cap.
+    monkeypatch.setattr(rest, "_limiter", RateLimiter(per_minute=60, burst=2))
+    # post to /mcp/ (trailing slash) to avoid the redirect double-counting a token
+    codes = [
+        client.post(
+            "/mcp/",
+            content=json.dumps({"jsonrpc": "2.0", "id": i, "method": "ping"}),
+            headers=MCP_HEADERS,
+        ).status_code
+        for i in range(3)
+    ]
+    assert codes[-1] == 429  # burst 2 -> third is limited
+    # the shared bucket is now drained, so /preflight is limited too
+    assert client.get("/preflight", params={"url": "https://x.example/"}).status_code == 429

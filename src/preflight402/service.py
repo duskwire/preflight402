@@ -52,6 +52,10 @@ async def get_preflight(url: str, settings: Settings) -> PreflightResult:
         parts.port or default_port,
         allow_private=settings.allow_private_targets,
     )
+    # When we enforce public targets, the prober must pin to the validated IP
+    # and never re-resolve — so a check-time resolution failure means "don't
+    # probe via a fresh lookup", not "probe unvalidated".
+    enforce_pin = not settings.allow_private_targets
     ensure_migrated(str(settings.db_path))
 
     cached = _cached_document(canonical, settings)
@@ -66,7 +70,7 @@ async def get_preflight(url: str, settings: Settings) -> PreflightResult:
     future: asyncio.Future = asyncio.get_running_loop().create_future()
     _inflight[canonical] = future
     try:
-        document = await _run_preflight(canonical, settings, pinned_ip)
+        document = await _run_preflight(canonical, settings, pinned_ip, enforce_pin)
     except BaseException as exc:
         if not future.done():
             future.set_exception(exc)
@@ -89,9 +93,17 @@ def _cached_document(canonical: str, settings: Settings) -> dict[str, Any] | Non
 
 
 async def _run_preflight(
-    canonical: str, settings: Settings, pinned_ip: str | None = None
+    canonical: str,
+    settings: Settings,
+    pinned_ip: str | None = None,
+    enforce_pin: bool = False,
 ) -> dict[str, Any]:
-    result = await probe(canonical, timeout_s=settings.probe_timeout_s, pinned_ip=pinned_ip)
+    result = await probe(
+        canonical,
+        timeout_s=settings.probe_timeout_s,
+        pinned_ip=pinned_ip,
+        enforce_pin=enforce_pin,
+    )
     detection = detect(result.headers, result.body)
     conn = connect(settings.db_path)
     try:

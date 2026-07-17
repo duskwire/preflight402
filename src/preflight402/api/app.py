@@ -23,6 +23,7 @@ from fastapi import FastAPI
 from preflight402 import __version__
 from preflight402.api import rest
 from preflight402.api.mcp_server import mcp
+from preflight402.api.ratelimit import RateLimitMiddleware
 
 
 @contextlib.asynccontextmanager
@@ -39,6 +40,15 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
     application.include_router(rest.router)
+    # Rate-limit BOTH public probe surfaces — /preflight and the mounted /mcp
+    # tool — sharing rest's limiter so they debit one bucket. A route-level
+    # dependency would miss the mounted MCP sub-app; middleware wraps it.
+    application.add_middleware(
+        RateLimitMiddleware,
+        get_limiter=lambda: rest._limiter,
+        get_rate=lambda: rest.settings.rate_limit_per_minute,
+        prefixes=("/preflight", "/mcp"),
+    )
     # Mount the MCP app at /mcp (not "/"), with its internal path at the mount
     # root, so it owns exactly the /mcp subtree. Mounting at "/" would
     # full-match every path and rob the REST routes of FastAPI's 405, trailing-

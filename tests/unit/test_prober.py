@@ -169,6 +169,35 @@ async def test_probe_pins_connection_to_validated_ip(stub_tls) -> None:
 
 
 @respx.mock
+async def test_pinned_405_post_fallback_stays_pinned(stub_tls) -> None:
+    # The POST retry must also connect to the pinned IP (not re-resolve).
+    respx.get("https://93.184.216.34/pay").mock(return_value=httpx.Response(405))
+    post_route = respx.post("https://93.184.216.34/pay").mock(
+        return_value=httpx.Response(
+            402, json={"x402Version": 2}, headers={"payment-required": "e30="}
+        )
+    )
+    result = await probe("https://example.com/pay", pinned_ip="93.184.216.34")
+    assert result.http_status == 402
+    assert result.method == "POST"
+    sent = post_route.calls.last.request
+    assert sent.url.host == "93.184.216.34"  # POST pinned too
+    assert sent.headers["host"] == "example.com"
+    assert sent.extensions.get("sni_hostname") == "example.com"
+
+
+@respx.mock
+async def test_enforce_pin_without_pin_is_dns_error_and_never_connects() -> None:
+    # The rebinding-safe path: enforcing but no validated pin (host didn't
+    # resolve at check time) must report dns without re-resolving/connecting.
+    route = respx.get("https://evil.example/")  # would match if it connected
+    result = await probe("https://evil.example/", pinned_ip=None, enforce_pin=True)
+    assert result.ok is False
+    assert result.error == "dns"
+    assert not route.called  # never re-resolved to a possibly-private target
+
+
+@respx.mock
 async def test_probe_does_not_follow_redirects() -> None:
     respx.get("http://api.example.com/").mock(
         return_value=httpx.Response(307, headers={"location": "https://elsewhere.example/"})
