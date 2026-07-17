@@ -3,7 +3,7 @@ import ipaddress
 import pytest
 
 from preflight402.probe import guard
-from preflight402.probe.guard import BlockedTargetError, assert_public_host, is_public_ip
+from preflight402.probe.guard import BlockedTargetError, is_public_ip, resolve_and_validate
 
 pytestmark = pytest.mark.anyio
 
@@ -33,24 +33,26 @@ def test_public_addresses_are_public(addr: str) -> None:
 
 
 @pytest.mark.parametrize("addr", BLOCKED)
-async def test_assert_public_host_blocks_literal_ips(addr: str) -> None:
+async def test_resolve_and_validate_blocks_literal_ips(addr: str) -> None:
     # Literal IPs need no DNS; getaddrinfo returns the address itself.
     with pytest.raises(BlockedTargetError):
-        await assert_public_host(addr, 443, allow_private=False)
+        await resolve_and_validate(addr, 443, allow_private=False)
 
 
-async def test_assert_public_host_allows_public_literal() -> None:
-    await assert_public_host("1.1.1.1", 443, allow_private=False)  # no raise
+async def test_resolve_and_validate_returns_the_pin_ip() -> None:
+    # A public literal validates and comes back as the address to pin to.
+    assert await resolve_and_validate("1.1.1.1", 443, allow_private=False) == "1.1.1.1"
 
 
 async def test_allow_private_bypasses_the_guard() -> None:
-    await assert_public_host("127.0.0.1", 443, allow_private=True)  # no raise
+    # No pin in dev mode (connection resolves normally).
+    assert await resolve_and_validate("127.0.0.1", 443, allow_private=True) is None
 
 
 async def test_unresolvable_host_is_left_to_the_prober() -> None:
     # A name that doesn't resolve is a DNS error the prober classifies, not a
-    # block — the guard must not raise.
-    await assert_public_host("nonexistent.invalid", 443, allow_private=False)
+    # block — the guard must not raise, and returns no pin.
+    assert await resolve_and_validate("nonexistent.invalid", 443, allow_private=False) is None
 
 
 async def test_hostname_resolving_to_private_is_blocked(monkeypatch) -> None:
@@ -60,7 +62,7 @@ async def test_hostname_resolving_to_private_is_blocked(monkeypatch) -> None:
 
     monkeypatch.setattr(guard.asyncio.get_running_loop(), "getaddrinfo", fake_getaddrinfo)
     with pytest.raises(BlockedTargetError):
-        await assert_public_host("internal.evil.example", 443, allow_private=False)
+        await resolve_and_validate("internal.evil.example", 443, allow_private=False)
 
 
 async def test_any_private_record_blocks_even_beside_a_public_one(monkeypatch) -> None:
@@ -72,4 +74,4 @@ async def test_any_private_record_blocks_even_beside_a_public_one(monkeypatch) -
 
     monkeypatch.setattr(guard.asyncio.get_running_loop(), "getaddrinfo", fake_getaddrinfo)
     with pytest.raises(BlockedTargetError):
-        await assert_public_host("mixed.example", 443, allow_private=False)
+        await resolve_and_validate("mixed.example", 443, allow_private=False)

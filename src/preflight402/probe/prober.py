@@ -14,7 +14,7 @@ import ssl
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -62,13 +62,19 @@ class ProbeResult:
         }
 
 
-async def probe(url: str, *, timeout_s: float = 10.0) -> ProbeResult:
+async def probe(url: str, *, timeout_s: float = 10.0, pinned_ip: str | None = None) -> ProbeResult:
     """GET the URL (no redirects followed) and capture what happened.
 
     A meaningful share of live x402 endpoints only answer POST and 405 a GET,
     so a GET that returns 405 is retried once with an empty JSON POST — the
     unpaid request returns the 402 challenge without being processed — and
     that result is kept when it reveals a 402.
+
+    When `pinned_ip` is given, both the GET/POST and the TLS handshake connect
+    to exactly that address (with the original host preserved for Host and
+    SNI), so a hostname already validated as public cannot be re-resolved to a
+    private target between check and connect (DNS rebinding). Callers get the
+    IP from guard.resolve_and_validate.
 
     Never raises for network-level failures — they come back classified in
     ProbeResult.error. TLS inspection runs as its own handshake, concurrent
@@ -85,11 +91,13 @@ async def probe(url: str, *, timeout_s: float = 10.0) -> ProbeResult:
         return ProbeResult(url=url, ok=False, error=_PROTOCOL, error_detail=str(exc))
     tls_task = None
     if parts.scheme == "https" and host:
-        tls_task = asyncio.ensure_future(inspect_tls(host, port, timeout_s=timeout_s))
+        tls_task = asyncio.ensure_future(
+            inspect_tls(host, port, timeout_s=timeout_s, pinned_ip=pinned_ip)
+        )
     try:
-        result = await _request("GET", url, timeout_s)
+        result = await _request("GET", url, timeout_s, pinned_ip=pinned_ip)
         if result.ok and result.http_status == 405:
-            post = await _request("POST", url, timeout_s, json_probe=True)
+            post = await _request("POST", url, timeout_s, json_probe=True, pinned_ip=pinned_ip)
             if post.ok and post.http_status == 402:
                 result = post
     finally:
@@ -107,15 +115,31 @@ async def probe(url: str, *, timeout_s: float = 10.0) -> ProbeResult:
 
 
 async def _request(
-    method: str, url: str, timeout_s: float, *, json_probe: bool = False
+    method: str,
+    url: str,
+    timeout_s: float,
+    *,
+    json_probe: bool = False,
+    pinned_ip: str | None = None,
 ) -> ProbeResult:
     started = time.monotonic()
     request_kwargs: dict[str, Any] = {}
+    headers: dict[str, str] = {}
+    target_url = url
+    if pinned_ip is not None:
+        # Connect to the validated IP but keep the original host for Host and
+        # SNI (httpx verifies the cert against sni_hostname), so no second DNS
+        # resolution happens that a rebinding attacker could subvert.
+        target_url, host_header = _pin_target(url, pinned_ip)
+        headers["host"] = host_header
+        request_kwargs["extensions"] = {"sni_hostname": urlsplit(url).hostname}
     if json_probe:
         # Minimal empty JSON body for the POST fallback: the x402 challenge is
         # returned pre-payment, so the request is never actually processed.
         request_kwargs["content"] = b"{}"
-        request_kwargs["headers"] = {"content-type": "application/json"}
+        headers["content-type"] = "application/json"
+    if headers:
+        request_kwargs["headers"] = headers
     try:
         async with httpx.AsyncClient(
             timeout=timeout_s,
@@ -125,7 +149,7 @@ async def _request(
             # Client construction loads the CA bundle (~30ms); restart the
             # timer so latency_ms measures the endpoint, not this process.
             started = time.monotonic()
-            async with client.stream(method, url, **request_kwargs) as response:
+            async with client.stream(method, target_url, **request_kwargs) as response:
                 raw = bytearray()
                 truncated = False
                 error = detail = None
@@ -163,6 +187,18 @@ async def _request(
             error_detail=detail,
             latency_ms=(time.monotonic() - started) * 1000,
         )
+
+
+def _pin_target(url: str, pinned_ip: str) -> tuple[str, str]:
+    """Rewrite `url` to connect to `pinned_ip`, returning (url, Host header)."""
+    parts = urlsplit(url)
+    ip_netloc = f"[{pinned_ip}]" if ":" in pinned_ip else pinned_ip
+    authority = f"{ip_netloc}:{parts.port}" if parts.port else ip_netloc
+    target = urlunsplit((parts.scheme, authority, parts.path or "/", parts.query, ""))
+    default_port = 443 if parts.scheme == "https" else 80
+    host = parts.hostname or ""
+    host_header = f"{host}:{parts.port}" if parts.port and parts.port != default_port else host
+    return target, host_header
 
 
 def _classify(exc: Exception) -> tuple[str, str]:

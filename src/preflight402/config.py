@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # --- verdict cache ---
     preflight_cache_ttl_s: float = 300.0  # task 1.5: 5-minute TTL
 
+    # --- public-endpoint hardening ---
+    # Per-client-IP token bucket on /preflight (0 disables). Each uncached
+    # call makes an outbound probe, so this caps abuse/amplification.
+    rate_limit_per_minute: float = 60.0
+
 
 @lru_cache
 def get_settings() -> Settings:

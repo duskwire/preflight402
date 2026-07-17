@@ -130,6 +130,44 @@ async def test_non_405_get_does_not_trigger_post(stub_tls) -> None:
     assert not post_route.called  # no wasted POST when GET already answered
 
 
+def test_pin_target_rewrites_url_and_host() -> None:
+    from preflight402.probe.prober import _pin_target
+
+    assert _pin_target("https://example.com/pay?q=1", "93.184.216.34") == (
+        "https://93.184.216.34/pay?q=1",
+        "example.com",
+    )
+    # non-default port is preserved in both the target and the Host header
+    assert _pin_target("https://example.com:8443/x", "93.184.216.34") == (
+        "https://93.184.216.34:8443/x",
+        "example.com:8443",
+    )
+    # IPv6 pin address is bracketed
+    assert _pin_target("https://example.com/", "2606:4700::1111") == (
+        "https://[2606:4700::1111]/",
+        "example.com",
+    )
+
+
+@respx.mock
+async def test_probe_pins_connection_to_validated_ip(stub_tls) -> None:
+    # With a pinned IP, the request connects to that exact address while
+    # keeping the original host for Host + SNI — closing DNS rebinding.
+    route = respx.get("https://93.184.216.34/pay").mock(
+        return_value=httpx.Response(
+            402, json={"x402Version": 2}, headers={"payment-required": "e30="}
+        )
+    )
+    result = await probe("https://example.com/pay", pinned_ip="93.184.216.34")
+    assert result.ok is True
+    assert result.http_status == 402
+    assert result.url == "https://example.com/pay"  # reports the original URL
+    sent = route.calls.last.request
+    assert sent.url.host == "93.184.216.34"  # connected to the pinned IP
+    assert sent.headers["host"] == "example.com"  # original host preserved
+    assert sent.extensions.get("sni_hostname") == "example.com"
+
+
 @respx.mock
 async def test_probe_does_not_follow_redirects() -> None:
     respx.get("http://api.example.com/").mock(

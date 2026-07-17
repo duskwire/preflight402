@@ -40,10 +40,16 @@ def _v2_headers(amount: str = "10000") -> dict[str, str]:
 def client(tmp_path: Path, monkeypatch) -> TestClient:
     # allow_private_targets: these tests use unresolvable example hostnames
     # with a stubbed prober, so skip the real DNS the SSRF guard would do.
+    # rate_limit_per_minute=0: pipeline tests aren't rate-limit tests.
     monkeypatch.setattr(
         rest,
         "settings",
-        Settings(_env_file=None, db_path=tmp_path / "preflight.db", allow_private_targets=True),
+        Settings(
+            _env_file=None,
+            db_path=tmp_path / "preflight.db",
+            allow_private_targets=True,
+            rate_limit_per_minute=0,
+        ),
     )
     service.ensure_migrated.cache_clear()
     return TestClient(rest.app)
@@ -58,7 +64,9 @@ def probe_stub(monkeypatch):
             self.results: list[ProbeResult] = []
             self.calls: list[str] = []
 
-        async def __call__(self, url: str, *, timeout_s: float = 10.0) -> ProbeResult:
+        async def __call__(
+            self, url: str, *, timeout_s: float = 10.0, pinned_ip=None
+        ) -> ProbeResult:
             self.calls.append(url)
             return self.results.pop(0)
 
@@ -173,7 +181,9 @@ def test_ssrf_target_is_403_and_never_probed(tmp_path, monkeypatch, probe_stub) 
     # With the guard active (allow_private_targets defaults False), a private
     # target is rejected before the network is touched.
     monkeypatch.setattr(
-        rest, "settings", Settings(_env_file=None, db_path=tmp_path / "p.db")
+        rest,
+        "settings",
+        Settings(_env_file=None, db_path=tmp_path / "p.db", rate_limit_per_minute=0),
     )
     service.ensure_migrated.cache_clear()
     guarded = TestClient(rest.app)
@@ -232,7 +242,7 @@ async def test_concurrent_cold_requests_probe_once(client, monkeypatch) -> None:
     # probe and one recorded observation, and agree on the verdict.
     calls: list[str] = []
 
-    async def slow_probe(url: str, *, timeout_s: float = 10.0) -> ProbeResult:
+    async def slow_probe(url: str, *, timeout_s: float = 10.0, pinned_ip=None) -> ProbeResult:
         calls.append(url)
         await asyncio.sleep(0.05)
         return _payment_probe()

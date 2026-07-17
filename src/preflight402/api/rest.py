@@ -1,7 +1,9 @@
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from starlette.requests import Request
 
 from preflight402 import __version__
+from preflight402.api.ratelimit import RateLimiter, client_ip
 from preflight402.config import get_settings
 from preflight402.db import queries
 from preflight402.probe.guard import BlockedTargetError
@@ -9,10 +11,22 @@ from preflight402.service import get_preflight
 
 # Resolved at import so misconfiguration fails the boot, not the first request.
 settings = get_settings()
+_limiter = RateLimiter(settings.rate_limit_per_minute)
 
 # Routes live on a router so the deployment app (api.app) can serve the same
 # REST surface alongside the MCP mount without duplicating definitions.
 router = APIRouter()
+
+
+def rate_limit(request: Request) -> None:
+    if settings.rate_limit_per_minute <= 0:
+        return
+    if not _limiter.allow(client_ip(request)):
+        raise HTTPException(
+            status_code=429,
+            detail="rate limit exceeded",
+            headers={"retry-after": "60"},
+        )
 
 app = FastAPI(
     title="preflight402",
@@ -26,7 +40,7 @@ async def healthz() -> dict[str, str]:
     return {"status": "ok", "version": __version__, "environment": settings.environment}
 
 
-@router.get("/preflight")
+@router.get("/preflight", dependencies=[Depends(rate_limit)])
 async def preflight(url: str) -> JSONResponse:
     """One free call before your agent pays: the trust-preview.v1 verdict.
 

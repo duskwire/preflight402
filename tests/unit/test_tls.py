@@ -90,7 +90,7 @@ async def test_unparseable_cert_degrades_to_no_details(monkeypatch) -> None:
     # must degrade gracefully with the handshake verdict preserved.
     from preflight402.probe import tls as tls_mod
 
-    async def fake_fetch(host, port, context, timeout_s):
+    async def fake_fetch(connect_host, server_hostname, port, context, timeout_s):
         return b"not a certificate"
 
     monkeypatch.setattr(tls_mod, "_fetch_peer_cert_der", fake_fetch)

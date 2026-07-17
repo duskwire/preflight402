@@ -36,6 +36,7 @@ async def inspect_tls(
     *,
     timeout_s: float = 10.0,
     ca_file: str | None = None,
+    pinned_ip: str | None = None,
 ) -> TLSInfo:
     """Handshake with the host and report certificate validity and details.
 
@@ -49,7 +50,7 @@ async def inspect_tls(
     leave it None for the system store.
     """
     try:
-        return await _inspect_tls(host, port, timeout_s, ca_file)
+        return await _inspect_tls(host, port, timeout_s, ca_file, pinned_ip)
     except Exception as exc:
         # Never let inspection kill a probe: getaddrinfo raises UnicodeError
         # on bad IDNA labels, cryptography rejects certs OpenSSL accepts, ...
@@ -57,14 +58,21 @@ async def inspect_tls(
         return TLSInfo(valid=False, error=f"{type(exc).__name__}: {detail}".rstrip(": "))
 
 
-async def _inspect_tls(host: str, port: int, timeout_s: float, ca_file: str | None) -> TLSInfo:
+async def _inspect_tls(
+    host: str, port: int, timeout_s: float, ca_file: str | None, pinned_ip: str | None = None
+) -> TLSInfo:
+    # Connect to the pinned IP (if any) but keep server_hostname=host for SNI
+    # and cert-hostname verification — same rebinding-safe pin as the GET.
+    connect_host = pinned_ip or host
     verified_ctx = ssl.create_default_context(cafile=ca_file)
     try:
-        der = await _fetch_peer_cert_der(host, port, verified_ctx, timeout_s)
+        der = await _fetch_peer_cert_der(connect_host, host, port, verified_ctx, timeout_s)
     except ssl.SSLCertVerificationError as exc:
         detail = exc.verify_message or str(exc)
         try:
-            der = await _fetch_peer_cert_der(host, port, _unverified_context(), timeout_s)
+            der = await _fetch_peer_cert_der(
+                connect_host, host, port, _unverified_context(), timeout_s
+            )
         except (TimeoutError, OSError) as retry_exc:
             retry_detail = str(retry_exc) or type(retry_exc).__name__
             return TLSInfo(valid=False, error=f"{detail}; cert fetch failed: {retry_detail}")
@@ -79,11 +87,11 @@ async def _inspect_tls(host: str, port: int, timeout_s: float, ca_file: str | No
 
 
 async def _fetch_peer_cert_der(
-    host: str, port: int, context: ssl.SSLContext, timeout_s: float
+    connect_host: str, server_hostname: str, port: int, context: ssl.SSLContext, timeout_s: float
 ) -> bytes:
     async with asyncio.timeout(timeout_s):
         _, writer = await asyncio.open_connection(
-            host, port, ssl=context, server_hostname=host
+            connect_host, port, ssl=context, server_hostname=server_hostname
         )
     try:
         ssl_object = writer.get_extra_info("ssl_object")

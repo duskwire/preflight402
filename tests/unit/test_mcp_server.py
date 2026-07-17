@@ -58,7 +58,7 @@ def stub_probe(monkeypatch):
     results: list[ProbeResult] = []
     calls: list[str] = []
 
-    async def fake(url: str, *, timeout_s: float = 10.0) -> ProbeResult:
+    async def fake(url: str, *, timeout_s: float = 10.0, pinned_ip=None) -> ProbeResult:
         calls.append(url)
         return results.pop(0)
 

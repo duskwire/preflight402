@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 
 from preflight402.config import Settings
 from preflight402.db import connect, migrate, queries
-from preflight402.probe.guard import assert_public_host
+from preflight402.probe.guard import resolve_and_validate
 from preflight402.probe.parsers import detect
 from preflight402.probe.prober import probe
 from preflight402.verdict.rules import evaluate
@@ -43,10 +43,14 @@ async def get_preflight(url: str, settings: Settings) -> PreflightResult:
     """
     canonical = queries.canonicalize_url(url)
     parts = urlsplit(canonical)
+    default_port = 443 if parts.scheme == "https" else 80
     # Reject non-public targets before touching the cache or the network, so a
-    # blocked URL is never probed, cached, or persisted.
-    await assert_public_host(
-        parts.hostname or "", parts.port or 443, allow_private=settings.allow_private_targets
+    # blocked URL is never probed, cached, or persisted. The returned IP is
+    # what the probe pins to, closing DNS rebinding.
+    pinned_ip = await resolve_and_validate(
+        parts.hostname or "",
+        parts.port or default_port,
+        allow_private=settings.allow_private_targets,
     )
     ensure_migrated(str(settings.db_path))
 
@@ -62,7 +66,7 @@ async def get_preflight(url: str, settings: Settings) -> PreflightResult:
     future: asyncio.Future = asyncio.get_running_loop().create_future()
     _inflight[canonical] = future
     try:
-        document = await _run_preflight(canonical, settings)
+        document = await _run_preflight(canonical, settings, pinned_ip)
     except BaseException as exc:
         if not future.done():
             future.set_exception(exc)
@@ -84,8 +88,10 @@ def _cached_document(canonical: str, settings: Settings) -> dict[str, Any] | Non
         conn.close()
 
 
-async def _run_preflight(canonical: str, settings: Settings) -> dict[str, Any]:
-    result = await probe(canonical, timeout_s=settings.probe_timeout_s)
+async def _run_preflight(
+    canonical: str, settings: Settings, pinned_ip: str | None = None
+) -> dict[str, Any]:
+    result = await probe(canonical, timeout_s=settings.probe_timeout_s, pinned_ip=pinned_ip)
     detection = detect(result.headers, result.body)
     conn = connect(settings.db_path)
     try:

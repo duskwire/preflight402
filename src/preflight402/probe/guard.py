@@ -8,11 +8,10 @@ read the response. This module blocks that at the untrusted-input boundary
 (service.get_preflight); local development can opt back in with
 PREFLIGHT402_ALLOW_PRIVATE_TARGETS=true.
 
-Scope note: this validates the addresses a host resolves to *now*. A hostname
-that resolves to a public IP here but a private one microseconds later at
-connect time (DNS rebinding) is not fully closed — pinning the probe to the
-validated IP is a tracked hardening follow-up. The common case (a caller
-naming a private IP or an internal hostname directly) is closed.
+DNS rebinding is closed by returning the validated IP so the caller can pin
+the actual connection to it (probe(pinned_ip=...)): the address we checked is
+the address we connect to, with no second resolution a hostile DNS server
+could swap for a private target between check and connect.
 """
 
 from __future__ import annotations
@@ -39,25 +38,31 @@ def is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return ip.is_global
 
 
-async def assert_public_host(host: str, port: int, *, allow_private: bool = False) -> None:
-    """Resolve `host` and raise BlockedTargetError if any address is non-public.
+async def resolve_and_validate(
+    host: str, port: int, *, allow_private: bool = False
+) -> str | None:
+    """Resolve `host`, reject any non-public address, return the IP to pin to.
 
     Every resolved address must be public — a host that resolves to both a
     public and a private address is rejected (the private one is the danger).
-    Resolution failures are left to the prober to classify as a normal DNS
-    error, so this only raises for the block case.
+    Returns the first resolved address so the caller can pin the connection to
+    it, closing DNS rebinding. Returns None when pinning does not apply:
+    allow_private is set (dev), or the host did not resolve (left for the
+    prober to classify as a DNS error). Only raises for the block case.
     """
     if allow_private:
-        return
+        return None
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(
             host, port, type=socket.SOCK_STREAM
         )
     except socket.gaierror:
-        return  # not resolvable — the prober will report this as a dns error
+        return None  # not resolvable — the prober will report this as a dns error
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
         if not is_public_ip(ip):
             raise BlockedTargetError(
                 f"refusing to probe {host!r}: resolves to non-public address {ip}"
             )
+    # Pin to the first address — the same one getaddrinfo/the OS would prefer.
+    return infos[0][4][0] if infos else None

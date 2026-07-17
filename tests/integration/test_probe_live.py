@@ -32,3 +32,20 @@ async def test_non_https_url() -> None:
     result = await probe("http://example.com/")
     assert result.ok is True
     assert result.tls is None
+
+
+async def test_pinned_ip_connects_with_verified_tls() -> None:
+    # Resolve, then pin the probe to that exact IP: TLS must still verify
+    # against the hostname (the rebinding-safe pin), and it reaches example.com.
+    import asyncio
+    import socket
+
+    infos = await asyncio.get_running_loop().getaddrinfo(
+        "example.com", 443, type=socket.SOCK_STREAM
+    )
+    ip = infos[0][4][0]
+    result = await probe("https://example.com/", pinned_ip=ip)
+    assert result.ok is True
+    assert result.http_status == 200
+    assert result.tls is not None
+    assert result.tls.valid is True  # cert verified against the hostname, not the IP
