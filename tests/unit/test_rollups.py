@@ -275,3 +275,84 @@ def test_first_sight_endpoint_still_cautions(db, tmp_path, monkeypatch) -> None:
     assert doc["verdict"]["recommendation"] == "caution"
     assert doc["verdict"]["confidence"] == "low"
     assert any("single probe" in r for r in doc["verdict"]["reasons"])
+
+
+# --- M3.4: trailing streaks for the dead/zombie heuristics -------------------
+
+
+def test_history_stats_trailing_failure_streak(db) -> None:
+    endpoint_id = queries.upsert_endpoint(db, "https://dying.example/x")
+    queries.record_probe(db, endpoint_id, ok=True, http_status=402, now=hours_ago(5))
+    for h in (3, 2, 1):
+        queries.record_probe(db, endpoint_id, ok=False, error="timeout", now=hours_ago(h))
+    stats = rollups.history_stats(db, endpoint_id, now=NOW)
+    assert stats.consecutive_failures == 3  # the old success ends the streak
+    assert stats.consecutive_non402 == 0
+
+
+def test_history_stats_trailing_non402_streak(db) -> None:
+    endpoint_id = queries.upsert_endpoint(db, "https://zombie.example/x")
+    queries.record_probe(db, endpoint_id, ok=True, http_status=402, now=hours_ago(5))
+    for h, status in ((3, 404), (2, 404), (1, 200)):
+        queries.record_probe(db, endpoint_id, ok=True, http_status=status, now=hours_ago(h))
+    stats = rollups.history_stats(db, endpoint_id, now=NOW)
+    assert stats.consecutive_non402 == 3
+    assert stats.consecutive_failures == 0
+
+
+def test_history_stats_streaks_reset_by_current_success(db) -> None:
+    endpoint_id = queries.upsert_endpoint(db, "https://recovered.example/x")
+    for h in (4, 3, 2):
+        queries.record_probe(db, endpoint_id, ok=False, error="timeout", now=hours_ago(h))
+    queries.record_probe(db, endpoint_id, ok=True, http_status=402, now=hours_ago(1))
+    stats = rollups.history_stats(db, endpoint_id, now=NOW)
+    assert stats.consecutive_failures == 0
+    assert stats.consecutive_non402 == 0
+
+
+def test_dead_endpoint_flag_surfaces_through_the_service(db, tmp_path, monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from preflight402 import service
+    from preflight402.api import rest
+    from preflight402.config import Settings
+
+    db_path = tmp_path / "svc-dead.db"
+    monkeypatch.setattr(
+        rest,
+        "settings",
+        Settings(
+            _env_file=None,
+            db_path=db_path,
+            allow_private_targets=True,
+            rate_limit_per_minute=0,
+        ),
+    )
+    service.ensure_migrated.cache_clear()
+
+    async def failing_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+        return ProbeResult(url=url, ok=False, error="timeout")
+
+    monkeypatch.setattr(service, "probe", failing_probe)
+
+    conn = connect(db_path)
+    migrate(conn)
+    url = "https://dead.example/pay"
+    endpoint_id = queries.upsert_endpoint(
+        conn, url, source="bazaar", now=queries.iso_add_seconds(queries.utcnow_iso(), -30 * 86400)
+    )
+    for i in range(2):  # two prior failures; the live one makes three
+        queries.record_probe(
+            conn,
+            endpoint_id,
+            ok=False,
+            error="timeout",
+            now=queries.iso_add_seconds(queries.utcnow_iso(), -(i + 1) * 3600),
+        )
+    conn.close()
+
+    client = TestClient(rest.app)
+    doc = client.get("/preflight", params={"url": url}).json()
+    assert doc["verdict"]["recommendation"] == "avoid"
+    assert doc["authenticity"]["flags"] == ["dead"]
+    assert any("dead endpoint (3 consecutive" in r for r in doc["verdict"]["reasons"])

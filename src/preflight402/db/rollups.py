@@ -32,6 +32,7 @@ from preflight402.db import queries
 from preflight402.verdict.rules import HistoryStats
 
 PERIODS: dict[str, float] = {"24h": 86400.0, "7d": 7 * 86400.0, "30d": 30 * 86400.0}
+TRAILING_LIMIT = 10  # probes examined for the dead/zombie trailing streaks
 
 
 def window_rollup(probes: list[dict[str, Any]]) -> dict[str, Any]:
@@ -120,10 +121,28 @@ def history_stats(
     observed_days = max((now_dt - first_dt).total_seconds() / 86400.0, 0.0)
     since_7d = queries.iso_add_seconds(now, -PERIODS["7d"])
     window = window_rollup(queries.probes_since(conn, endpoint_id, since_7d))
+    # Trailing streaks for the M3.4 dead/zombie heuristics, newest first.
+    # A full-window streak reads as "at least TRAILING_LIMIT" — the rules
+    # thresholds sit far below it.
+    recent = queries.latest_probes(conn, endpoint_id, limit=TRAILING_LIMIT)
+    consecutive_failures = 0
+    for probe in recent:
+        if probe["ok"]:
+            break
+        consecutive_failures += 1
+    consecutive_non402 = 0
+    for probe in recent:
+        # A NULL-status ok row is anomalous (counted as downtime, not as an
+        # answer) — it must not read as zombie evidence either.
+        if not probe["ok"] or probe["http_status"] == 402 or probe["http_status"] is None:
+            break
+        consecutive_non402 += 1
     return HistoryStats(
         probe_count=row["n"],
         observed_days=observed_days,
         uptime_7d=window["uptime_pct"],
         p50_ms=window["p50_ms"],
         p99_ms=window["p99_ms"],
+        consecutive_failures=consecutive_failures,
+        consecutive_non402=consecutive_non402,
     )

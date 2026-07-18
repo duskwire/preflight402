@@ -118,7 +118,7 @@ def build_trust_preview(
         "authenticity": {
             "reseller_probability": None,  # paid tier (M8)
             "upstream_fingerprints": [],
-            "flags": [],
+            "flags": verdict.flags,  # M3.4: dead | zombie | decoy_price_extreme | new_provider
         },
         "reputation": {
             "erc8004": {

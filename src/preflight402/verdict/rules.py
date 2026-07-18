@@ -20,7 +20,7 @@ being unpriceable rather than guessed.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from preflight402.probe.parsers import Detection
@@ -34,6 +34,10 @@ TLS_EXPIRING_SOON_DAYS = 14
 NEW_PROVIDER_DAYS = 7
 HIGH_CONFIDENCE_PROBES = 20
 HIGH_CONFIDENCE_DAYS = 7
+# M3.4 heuristics (flag names track x402station's categories):
+DEAD_CONSECUTIVE_FAILS = 3  # trailing transport failures -> flag `dead`
+ZOMBIE_CONSECUTIVE_NON402 = 3  # trailing answered-but-no-402 -> flag `zombie`
+DECOY_PRICE_EXTREME_USD = 50.0  # 10x the avoid cap -> flag `decoy_price_extreme`
 
 USDC_BASE = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
 USDC_POLYGON = "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359"
@@ -53,13 +57,22 @@ for _networks, _asset, _decimals in [
 
 @dataclass(slots=True)
 class HistoryStats:
-    """Aggregates the M3 rollups will supply; single-probe callers pass None."""
+    """Aggregates from M3.3 rollups; single-probe callers pass None.
+
+    The trailing runs are newest-first streaks over the most recent probes
+    (INCLUDING the just-recorded current one — both the service and the
+    scheduler record before evaluating): consecutive_failures counts ok=0
+    probes, consecutive_non402 counts answered-but-not-402 probes. At most
+    one of them is non-zero.
+    """
 
     probe_count: int
     observed_days: float
     uptime_7d: float | None = None
     p50_ms: float | None = None
     p99_ms: float | None = None
+    consecutive_failures: int = 0
+    consecutive_non402: int = 0
 
 
 @dataclass(slots=True)
@@ -70,6 +83,8 @@ class Verdict:
     reasons: list[str]
     is_payment_endpoint: bool
     price_usd: float | None  # cheapest priceable offer, for endpoint.price
+    flags: list[str] = field(default_factory=list)  # M3.4: dead | zombie |
+    # decoy_price_extreme | new_provider — surfaced as authenticity.flags
 
 
 def is_payment_shaped(probe: ProbeResult, detection: Detection) -> bool:
@@ -100,8 +115,26 @@ def evaluate(
     avoid: list[str] = []
     caution: list[str] = []
     positive: list[str] = []
+    flags: list[str] = []
 
     is_payment = is_payment_shaped(probe, detection)
+
+    # --- history-backed heuristics (M3.4): dead / zombie ---
+    # The trailing runs include the current probe, so these de-flake the
+    # single-probe judgements: one bad probe stays a per-probe reason, a
+    # streak becomes a named condition.
+    if history is not None:
+        if history.consecutive_failures >= DEAD_CONSECUTIVE_FAILS:
+            avoid.append(
+                f"dead endpoint ({history.consecutive_failures} consecutive failed probes)"
+            )
+            flags.append("dead")
+        elif history.consecutive_non402 >= ZOMBIE_CONSECUTIVE_NON402:
+            avoid.append(
+                "zombie: registered but serving no 402"
+                f" ({history.consecutive_non402} consecutive non-402 responses)"
+            )
+            flags.append("zombie")
 
     # --- reachability + handshake ---
     if not probe.ok:
@@ -181,6 +214,10 @@ def evaluate(
             avoid.append(
                 f"price ${_fmt_usd(price_usd)} exceeds the ${PRICE_AVOID_ABOVE_USD:.0f} cap"
             )
+            if price_usd > DECOY_PRICE_EXTREME_USD:
+                # 10x past the cap is not a pricing decision, it's bait for
+                # agents that skip sanity checks.
+                flags.append("decoy_price_extreme")
         else:
             # min() is "the price" an agent would pay, but an above-cap offer
             # on another network must not be silently blessed — an agent that
@@ -225,6 +262,7 @@ def evaluate(
         age_days = (now_dt - first_seen_dt).total_seconds() / 86400
         if age_days < NEW_PROVIDER_DAYS:
             caution.append(f"new provider (first seen {math.floor(max(age_days, 0))} days ago)")
+            flags.append("new_provider")
 
     # --- roll up ---
     if avoid:
@@ -258,6 +296,7 @@ def evaluate(
         reasons=reasons,
         is_payment_endpoint=is_payment,
         price_usd=price_usd,
+        flags=flags,
     )
 
 

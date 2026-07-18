@@ -499,3 +499,80 @@ def test_estimate_price_skips_malformed_and_unknown() -> None:
     unknown = _payload()
     unknown["accepts"][0]["network"] = "eip155:1"  # no known USD asset there
     assert estimate_price_usd(_detection(unknown)) is None
+
+
+# --- M3.4 heuristics: dead / zombie / decoy / new-provider flags -------------
+
+
+def _history(**overrides) -> HistoryStats:
+    defaults = dict(probe_count=25, observed_days=8.0, uptime_7d=99.5)
+    defaults.update(overrides)
+    return HistoryStats(**defaults)
+
+
+def test_dead_streak_is_avoid_with_flag() -> None:
+    verdict = _evaluate(
+        probe=_probe(ok=False, error="timeout", http_status=None, latency_ms=None, tls=None),
+        detection=_detection(),
+        history=_history(uptime_7d=10.0, consecutive_failures=3),
+    )
+    assert verdict.recommendation == "avoid"
+    assert "dead" in verdict.flags
+    assert any("dead endpoint (3 consecutive failed probes)" in r for r in verdict.reasons)
+
+
+def test_two_failures_is_not_dead_yet() -> None:
+    verdict = _evaluate(
+        probe=_probe(ok=False, error="timeout", http_status=None, latency_ms=None, tls=None),
+        detection=_detection(),
+        history=_history(consecutive_failures=2),
+    )
+    assert "dead" not in verdict.flags  # still avoid (unreachable), but not flagged dead
+    assert verdict.recommendation == "avoid"
+
+
+def test_zombie_streak_is_avoid_with_flag() -> None:
+    verdict = _evaluate(
+        probe=_probe(http_status=404),
+        detection=_detection(),
+        history=_history(consecutive_non402=4),
+    )
+    assert verdict.recommendation == "avoid"
+    assert "zombie" in verdict.flags
+    assert any("zombie" in r for r in verdict.reasons)
+
+
+def test_dead_takes_precedence_over_zombie() -> None:
+    # the streaks are disjoint by construction; if both are somehow set,
+    # dead (transport-level) is the stronger classification
+    verdict = _evaluate(
+        probe=_probe(ok=False, error="conn_refused", http_status=None, latency_ms=None, tls=None),
+        detection=_detection(),
+        history=_history(consecutive_failures=5, consecutive_non402=5),
+    )
+    assert "dead" in verdict.flags
+    assert "zombie" not in verdict.flags
+
+
+def test_healthy_history_has_no_heuristic_flags() -> None:
+    verdict = _evaluate(history=GOOD_HISTORY)
+    assert verdict.recommendation == "proceed"
+    assert verdict.flags == []
+
+
+def test_extreme_price_gets_decoy_flag() -> None:
+    verdict = _evaluate(detection=_detection(_payload(amount="60000000")))  # $60
+    assert verdict.recommendation == "avoid"
+    assert "decoy_price_extreme" in verdict.flags
+
+
+def test_above_cap_but_not_extreme_is_not_decoy_flagged() -> None:
+    verdict = _evaluate(detection=_detection(_payload(amount="6000000")))  # $6
+    assert verdict.recommendation == "avoid"
+    assert "decoy_price_extreme" not in verdict.flags
+
+
+def test_new_provider_gets_flag() -> None:
+    verdict = _evaluate(first_seen_at="2026-07-13T12:00:00.000Z")  # 2 days before NOW
+    assert "new_provider" in verdict.flags
+    assert verdict.recommendation == "caution"
