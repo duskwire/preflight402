@@ -259,6 +259,83 @@ def test_non_payment_urls_are_cached_but_not_persisted(client, probe_stub) -> No
         conn.close()
 
 
+def test_bare_402_without_payment_terms_is_cached_but_not_persisted(client, probe_stub) -> None:
+    # A 402 with NO parseable payment markers (protocol 'none') must not
+    # create an endpoint row either — persistence keys off the full
+    # payment-shaped predicate, not the status code alone.
+    url = "https://junk402.example/paywall"
+    probe_stub.results.append(
+        ProbeResult(
+            url=url,
+            ok=True,
+            http_status=402,
+            headers={"content-type": "text/html"},
+            body="<html>payment required, trust me</html>",
+            latency_ms=80.0,
+            tls=GOOD_TLS,
+        )
+    )
+    doc = client.get("/preflight", params={"url": url}).json()
+    assert any("malformed 402" in reason for reason in doc["verdict"]["reasons"])
+    conn = connect(rest.settings.db_path)
+    try:
+        assert queries.get_endpoint(conn, url) is None
+        assert queries.get_verdict(conn, url, "preflight") is not None
+    finally:
+        conn.close()
+
+
+def test_known_endpoint_records_non_payment_probes_with_history(client, probe_stub) -> None:
+    # A known endpoint that stops serving 402s must still get the downtime
+    # observation recorded AND its history passed to the verdict — that
+    # evidence is the product.
+    url = "https://api.example.com/data"
+    probe_stub.results.append(_payment_probe())
+    client.get("/preflight", params={"url": url})
+
+    conn = connect(rest.settings.db_path)
+    try:
+        endpoint = queries.get_endpoint(conn, url)
+        assert endpoint is not None
+        for i in range(5):
+            queries.record_probe(
+                conn,
+                endpoint["id"],
+                ok=True,
+                http_status=402,
+                latency_ms=100.0,
+                is_402=True,
+                now=queries.iso_add_seconds(queries.utcnow_iso(), -(i + 1) * 3600),
+            )
+        before = conn.execute("SELECT COUNT(*) FROM probes").fetchone()[0]
+        conn.execute("DELETE FROM verdict_cache")  # force a fresh probe
+    finally:
+        conn.close()
+
+    probe_stub.results.append(
+        ProbeResult(
+            url=url,
+            ok=True,
+            http_status=500,
+            headers={},
+            body="oops",
+            latency_ms=70.0,
+            tls=GOOD_TLS,
+        )
+    )
+    doc = client.get("/preflight", params={"url": url}).json()
+
+    conn = connect(rest.settings.db_path)
+    try:
+        after = conn.execute("SELECT COUNT(*) FROM probes").fetchone()[0]
+    finally:
+        conn.close()
+    assert after == before + 1  # the 500 was recorded for the known endpoint
+    assert doc["verdict"]["recommendation"] == "avoid"
+    # history reached the verdict: 7 probes -> confidence medium, not low
+    assert doc["verdict"]["confidence"] == "medium"
+
+
 @pytest.mark.anyio
 async def test_concurrent_cold_requests_probe_once(client, monkeypatch) -> None:
     # Two simultaneous cold requests for the same URL must coalesce onto one

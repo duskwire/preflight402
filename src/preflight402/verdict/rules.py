@@ -72,6 +72,17 @@ class Verdict:
     price_usd: float | None  # cheapest priceable offer, for endpoint.price
 
 
+def is_payment_shaped(probe: ProbeResult, detection: Detection) -> bool:
+    """A live 402 carrying parseable payment terms.
+
+    The single source of truth for 'is this a payment endpoint' — evaluate()
+    derives its verdict field from it, and service persistence decides with
+    it which URLs may create endpoint rows. Keep them the same predicate or
+    the probe schedule and the verdicts drift apart.
+    """
+    return bool(probe.ok and probe.http_status == 402 and detection.is_payment_endpoint)
+
+
 def evaluate(
     probe: ProbeResult,
     detection: Detection,
@@ -90,7 +101,7 @@ def evaluate(
     caution: list[str] = []
     positive: list[str] = []
 
-    is_payment = bool(probe.ok and probe.http_status == 402 and detection.is_payment_endpoint)
+    is_payment = is_payment_shaped(probe, detection)
 
     # --- reachability + handshake ---
     if not probe.ok:

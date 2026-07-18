@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from preflight402.config import Settings
-from preflight402.db import connect, queries
+from preflight402.db import connect, queries, rollups
 from preflight402.probe.guard import BlockedTargetError, resolve_and_validate
 from preflight402.probe.parsers import detect
 from preflight402.probe.prober import probe
@@ -47,6 +47,16 @@ BACKOFF_CAP_S = 3600.0
 
 # Indirection so tests can record politeness sleeps instead of serving them.
 _sleep = asyncio.sleep
+
+
+def _refresh_rollups_in_thread(db_path, endpoint_ids: list[int]) -> int:
+    """refresh_rollups on a worker thread: sqlite connections are bound to
+    their creating thread, so open a dedicated one here (cheap under WAL)."""
+    conn = connect(db_path)
+    try:
+        return rollups.refresh_rollups(conn, endpoint_ids)
+    finally:
+        conn.close()
 
 
 @dataclass(slots=True)
@@ -65,13 +75,14 @@ class CycleStats:
     errors: int = 0  # transport-level failures (probes.ok = 0)
     skipped_backoff: int = 0  # endpoints skipped because their host is backing off
     hosts: int = 0
+    rollup_rows: int = 0  # rollup rows refreshed for this cycle's probed endpoints
 
     def as_line(self) -> str:
         return (
             f"due={self.due} probed={self.probed} ok={self.ok}"
             f" errors={self.errors} blocked={self.blocked}"
             f" rate_limited={self.rate_limited} skipped_backoff={self.skipped_backoff}"
-            f" hosts={self.hosts}"
+            f" hosts={self.hosts} rollup_rows={self.rollup_rows}"
         )
 
 
@@ -117,11 +128,22 @@ class Scheduler:
                 groups.setdefault(endpoint["host"], []).append(endpoint)
             stats.hosts = len(groups)
             semaphore = asyncio.Semaphore(settings.probe_concurrency)
+            probed_ids: list[int] = []
             async with asyncio.TaskGroup() as tasks:
                 for host, endpoints in groups.items():
                     tasks.create_task(
-                        self._probe_host_group(conn, host, endpoints, semaphore, stats)
+                        self._probe_host_group(conn, host, endpoints, semaphore, stats, probed_ids)
                     )
+            # M3.3: materialize rollups for what this cycle touched, so the
+            # paid deep_report reads fresh windows without recomputing. In a
+            # worker thread with its own connection: measured ~48ms of
+            # synchronous work per endpoint at 30d history depth, which would
+            # stall the shared event loop for seconds per cycle when the
+            # scheduler is embedded in the API app (sqlite connections are
+            # thread-bound, hence the fresh one).
+            stats.rollup_rows = await asyncio.to_thread(
+                _refresh_rollups_in_thread, settings.db_path, probed_ids
+            )
             return stats
         finally:
             conn.close()
@@ -133,6 +155,7 @@ class Scheduler:
         endpoints: list[dict],
         semaphore: asyncio.Semaphore,
         stats: CycleStats,
+        probed_ids: list[int],
     ) -> None:
         state = self._hosts.setdefault(host, HostState())
         await _sleep(self._stagger())
@@ -153,6 +176,7 @@ class Scheduler:
                 stats.errors += 1
                 continue
             stats.probed += 1
+            probed_ids.append(endpoint["id"])  # every non-crash outcome wrote a row
             if outcome == "rate_limited":
                 stats.rate_limited += 1
                 state.backoff_level = min(state.backoff_level + 1, 12)

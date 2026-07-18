@@ -15,11 +15,11 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from preflight402.config import Settings
-from preflight402.db import connect, migrate, queries
+from preflight402.db import connect, migrate, queries, rollups
 from preflight402.probe.guard import resolve_and_validate
 from preflight402.probe.parsers import detect
 from preflight402.probe.prober import probe
-from preflight402.verdict.rules import evaluate
+from preflight402.verdict.rules import evaluate, is_payment_shaped
 from preflight402.verdict.schema import build_trust_preview
 
 # One in-flight computation per canonical URL: concurrent cold requests for the
@@ -110,20 +110,32 @@ async def _run_preflight(
         # A late arrival that missed both cache and in-flight map re-checks
         # here, so it never re-probes an answer another request just cached.
         existing = queries.get_endpoint(conn, canonical)
+
+        # Record real payment endpoints (and refresh known ones) so history
+        # accrues from live traffic alongside the M3 scheduler. Arbitrary
+        # non-payment URLs are cached but NOT persisted — a public endpoint
+        # must not let anyone spam junk rows into the probe schedule. The
+        # probe is recorded BEFORE evaluating so the verdict's history
+        # includes this observation; if evaluate/build ever raise after
+        # this point, the committed probe row survives with no cached
+        # verdict — intentional: the probe genuinely happened, exactly as
+        # a scheduler probe followed by a crash would.
+        history = None
+        if is_payment_shaped(result, detection) or existing is not None:
+            endpoint_id = queries.upsert_endpoint(conn, canonical, source="preflight")
+            record_probe_result(conn, endpoint_id, result, detection)
+            # M3.3: probe history upgrades verdicts past caution/low — the
+            # free tier's teaser is the better recommendation + confidence,
+            # while the numbers themselves stay in the paid deep_report.
+            history = rollups.history_stats(conn, endpoint_id)
+
         verdict = evaluate(
             result,
             detection,
+            history=history,
             first_seen_at=existing["first_seen_at"] if existing else None,
         )
         document = build_trust_preview(canonical, result, detection, verdict)
-
-        # Record real payment endpoints (and refresh known ones) so history
-        # accrues organically before the M3 scheduler exists. Arbitrary
-        # non-payment URLs are cached but NOT persisted — a public endpoint
-        # must not let anyone spam junk rows into the probe schedule.
-        if verdict.is_payment_endpoint or existing is not None:
-            endpoint_id = queries.upsert_endpoint(conn, canonical, source="preflight")
-            record_probe_result(conn, endpoint_id, result, detection)
         # No scheduler owns cache housekeeping yet, so reclaim expired rows
         # here — otherwise a flood of unique junk URLs grows verdict_cache
         # without bound (the index makes this touch only expired rows).

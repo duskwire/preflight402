@@ -209,6 +209,24 @@ async def test_per_host_share_is_capped_per_cycle(settings, sleeps, calm) -> Non
 
 
 @respx.mock
+async def test_cycle_refreshes_rollups_for_probed_endpoints(settings, sleeps, calm) -> None:
+    seed(settings, ["http://r1.example/pay", "http://r2.example/pay"])
+    respx.get(url__regex=r"http://r\d\.example/pay").mock(return_value=httpx.Response(402))
+    stats = await Scheduler(settings).run_cycle()
+    assert stats.probed == 2
+    assert stats.rollup_rows == 6  # 3 periods x 2 endpoints
+    conn = connect(settings.db_path)
+    try:
+        for url in ["http://r1.example/pay", "http://r2.example/pay"]:
+            endpoint = queries.get_endpoint(conn, url)
+            rows = queries.get_rollups(conn, endpoint["id"])
+            assert set(rows) == {"24h", "7d", "30d"}
+            assert rows["24h"]["probe_count"] == 1
+    finally:
+        conn.close()
+
+
+@respx.mock
 async def test_one_endpoints_crash_does_not_burn_the_cycle(
     settings, sleeps, calm, monkeypatch
 ) -> None:
