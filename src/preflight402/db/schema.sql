@@ -27,8 +27,11 @@ CREATE TABLE probes (
     probed_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     ok             INTEGER NOT NULL,            -- 1 = status line + headers arrived
     error          TEXT,                        -- timeout | dns | tls | conn_refused | protocol |
-                                                -- unknown. With ok=0: why no response; with ok=1:
-                                                -- a body-read failure after headers arrived
+                                                -- unknown | blocked. With ok=0: why no response;
+                                                -- with ok=1: a body-read failure after headers
+                                                -- arrived. blocked = the SSRF guard refused to
+                                                -- connect (target resolves non-public); scheduler-
+                                                -- written only, no network attempt was made
     http_status    INTEGER,
     latency_ms     REAL,
     tls_valid      INTEGER,

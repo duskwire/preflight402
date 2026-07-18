@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     probe_concurrency: int = 20
     per_host_min_interval_s: float = 60.0
     scheduler_cycle_s: float = 900.0  # 15-minute loop per the build plan
+    # The M3 scheduler is deploy-safe OFF: the home LXC must not start bulk
+    # probing on redeploy. Turn on explicitly (VPS, or capped home tests).
+    scheduler_enabled: bool = False
+    # Per-cycle probe budget; 0 = unlimited. Set small (e.g. 50) for
+    # conservative testing from a home IP.
+    scheduler_max_per_cycle: int = 0
 
     # --- verdict cache ---
     preflight_cache_ttl_s: float = 300.0  # task 1.5: 5-minute TTL

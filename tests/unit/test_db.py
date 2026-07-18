@@ -330,6 +330,46 @@ def test_upsert_endpoint_source_meta_argument_contract(db) -> None:
     assert q.list_endpoints(db, enabled_only=False) == []
 
 
+def test_endpoints_due_by_host_caps_each_hosts_share(db) -> None:
+    for i in range(4):
+        q.upsert_endpoint(db, f"https://big.example/e{i}")
+    q.upsert_endpoint(db, "https://small.example/only")
+    due = q.endpoints_due_by_host(
+        db, before="2026-07-17T00:00:00.000Z", per_host_limit=2, limit=100
+    )
+    hosts = [row["host"] for row in due]
+    assert hosts.count("big.example") == 2
+    assert hosts.count("small.example") == 1
+    assert all("rn" not in row for row in due)
+
+
+def test_endpoints_due_by_host_prefers_never_probed_then_oldest(db) -> None:
+    fresh = q.upsert_endpoint(db, "https://h.example/fresh")
+    stale = q.upsert_endpoint(db, "https://h.example/stale")
+    never = q.upsert_endpoint(db, "https://h.example/never")
+    q.record_probe(db, fresh, ok=True, now="2026-07-17T09:00:00.000Z")
+    q.record_probe(db, stale, ok=True, now="2026-07-16T09:00:00.000Z")
+    due = q.endpoints_due_by_host(
+        db, before="2026-07-17T08:00:00.000Z", per_host_limit=1, limit=100
+    )
+    # per-host winner is the never-probed endpoint; the freshly-probed one is
+    # not due at all
+    assert [row["id"] for row in due] == [never]
+    due_two = q.endpoints_due_by_host(
+        db, before="2026-07-17T08:00:00.000Z", per_host_limit=2, limit=100
+    )
+    assert [row["id"] for row in due_two] == [never, stale]
+
+
+def test_endpoints_due_by_host_excludes_disabled(db) -> None:
+    endpoint_id = q.upsert_endpoint(db, "https://off.example/x")
+    q.set_endpoint_enabled(db, endpoint_id, False)
+    assert (
+        q.endpoints_due_by_host(db, before="2026-07-17T00:00:00.000Z", per_host_limit=5, limit=100)
+        == []
+    )
+
+
 def test_get_endpoint_missing_returns_none(db) -> None:
     assert q.get_endpoint(db, "https://nowhere.example/") is None
 

@@ -175,6 +175,33 @@ def set_endpoint_enabled(conn: sqlite3.Connection, endpoint_id: int, enabled: bo
     conn.execute("UPDATE endpoints SET enabled = ? WHERE id = ?", (enabled, endpoint_id))
 
 
+def endpoints_due_by_host(
+    conn: sqlite3.Connection, *, before: str, per_host_limit: int, limit: int
+) -> list[dict[str, Any]]:
+    """Due endpoints, at most `per_host_limit` per host, oldest first overall.
+
+    The catalog is extremely host-skewed (one host holds ~20k endpoints as of
+    2026-07), so a flat oldest-first LIMIT would fill the whole probe budget
+    with endpoints per-host politeness cannot reach in one cycle. The window
+    caps each host's share; last_probed_at rotation keeps it fair across
+    cycles. Never-probed endpoints sort first.
+    """
+    rows = conn.execute(
+        "SELECT * FROM ("
+        " SELECT e.*, ROW_NUMBER() OVER ("
+        "  PARTITION BY host ORDER BY last_probed_at ASC NULLS FIRST, id ASC) AS rn"
+        " FROM endpoints e"
+        " WHERE enabled = 1 AND (last_probed_at IS NULL OR last_probed_at < ?)"
+        ") WHERE rn <= ?"
+        " ORDER BY last_probed_at ASC NULLS FIRST, id ASC LIMIT ?",
+        (before, per_host_limit, limit),
+    )
+    records = [_to_dict(row) for row in rows]
+    for record in records:
+        record.pop("rn", None)
+    return records
+
+
 # --- probes ------------------------------------------------------------------
 
 
@@ -308,7 +335,7 @@ def put_verdict(
     now: str | None = None,
 ) -> None:
     now = now or utcnow_iso()
-    expires_at = _iso_add_seconds(now, ttl_seconds)
+    expires_at = iso_add_seconds(now, ttl_seconds)
     conn.execute(
         "INSERT INTO verdict_cache (endpoint_url, tier, verdict, generated_at, expires_at)"
         " VALUES (?, ?, ?, ?, ?)"
@@ -336,6 +363,6 @@ def purge_expired_verdicts(conn: sqlite3.Connection, *, now: str | None = None) 
     return cursor.rowcount
 
 
-def _iso_add_seconds(timestamp: str, seconds: float) -> str:
+def iso_add_seconds(timestamp: str, seconds: float) -> str:
     result = datetime.fromisoformat(timestamp) + timedelta(seconds=seconds)
     return result.isoformat(timespec="milliseconds").replace("+00:00", "Z")

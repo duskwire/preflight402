@@ -123,16 +123,7 @@ async def _run_preflight(
         # must not let anyone spam junk rows into the probe schedule.
         if verdict.is_payment_endpoint or existing is not None:
             endpoint_id = queries.upsert_endpoint(conn, canonical, source="preflight")
-            queries.record_probe(
-                conn,
-                endpoint_id,
-                **result.db_fields(),
-                is_402=result.http_status == 402,
-                protocol=detection.protocol if detection.protocol != "none" else None,
-                spec_compliant=detection.spec_compliant,
-                warnings=detection.warnings or None,
-                payment=detection.as_db_payment(),
-            )
+            record_probe_result(conn, endpoint_id, result, detection)
         # No scheduler owns cache housekeeping yet, so reclaim expired rows
         # here — otherwise a flood of unique junk URLs grows verdict_cache
         # without bound (the index makes this touch only expired rows).
@@ -147,6 +138,22 @@ async def _run_preflight(
         return document
     finally:
         conn.close()
+
+
+def record_probe_result(conn, endpoint_id: int, result, detection) -> int:
+    """Persist one probe outcome. The single mapping from ProbeResult +
+    Detection onto the probes row — REST preflights and the M3 scheduler must
+    write identical rows or history built from mixed sources skews."""
+    return queries.record_probe(
+        conn,
+        endpoint_id,
+        **result.db_fields(),
+        is_402=result.http_status == 402,
+        protocol=detection.protocol if detection.protocol != "none" else None,
+        spec_compliant=detection.spec_compliant,
+        warnings=detection.warnings or None,
+        payment=detection.as_db_payment(),
+    )
 
 
 @cache
