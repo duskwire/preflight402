@@ -19,8 +19,9 @@ from preflight402.db import connect, migrate, queries, rollups
 from preflight402.probe.guard import resolve_and_validate
 from preflight402.probe.parsers import detect
 from preflight402.probe.prober import probe
+from preflight402.reputation import resolve_binding
 from preflight402.verdict.rules import evaluate, is_payment_shaped
-from preflight402.verdict.schema import build_trust_preview
+from preflight402.verdict.schema import build_trust_preview, payee_address
 
 # One in-flight computation per canonical URL: concurrent cold requests for the
 # same URL coalesce onto the first probe instead of each hitting the target and
@@ -140,7 +141,15 @@ async def _run_preflight(
             history=history,
             first_seen_at=existing["first_seen_at"] if existing else None,
         )
-        document = build_trust_preview(canonical, result, detection, verdict)
+        # M5: bind the payTo to an ERC-8004 identity + read raw reputation.
+        # Feature-gated on graph_api_key and never-raises, so it's a no-op
+        # (UNBOUND) when off or when the subgraph is unreachable — the
+        # verdict is unaffected either way. Runs only on cache-miss (this
+        # path), so the extra subgraph call is not on the hot cached path.
+        binding = await resolve_binding(payee_address(detection), canonical, settings)
+        document = build_trust_preview(
+            canonical, result, detection, verdict, binding=binding
+        )
         # No scheduler owns cache housekeeping yet, so reclaim expired rows
         # here — otherwise a flood of unique junk URLs grows verdict_cache
         # without bound (the index makes this touch only expired rows).

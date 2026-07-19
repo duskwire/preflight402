@@ -14,7 +14,19 @@ from typing import Any
 from preflight402.db.connection import utcnow_iso
 from preflight402.probe.parsers import Detection
 from preflight402.probe.prober import ProbeResult
+from preflight402.reputation.types import Binding
 from preflight402.verdict.rules import KNOWN_USD_ASSETS, Verdict, priced_offers
+
+
+def payee_address(detection: Detection) -> str | None:
+    """The payTo an agent would actually pay: the cheapest priceable offer's,
+    else the first accepts entry with a payTo. Shared by the schema's pay_to
+    field and the M5 binding lookup so they always describe the same rail."""
+    offers = priced_offers(detection)
+    if offers:
+        return min(offers, key=lambda offer: offer.usd).pay_to
+    accepts = detection.payment.accepts if detection.payment is not None else []
+    return next((option.pay_to for option in accepts if option.pay_to), None)
 
 
 def build_trust_preview(
@@ -23,6 +35,7 @@ def build_trust_preview(
     detection: Detection,
     verdict: Verdict,
     *,
+    binding: Binding | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Assemble the trust-preview.v1 response for one preflight."""
@@ -120,20 +133,41 @@ def build_trust_preview(
             "upstream_fingerprints": [],
             "flags": verdict.flags,  # M3.4: dead | zombie | decoy_price_extreme | new_provider
         },
-        "reputation": {
-            "erc8004": {
-                "bound": None,  # populated at M5
-                "agent_id": None,
-                "binding_method": None,
-                "raw_feedback_count": None,
-                "sybil_filtered_count": None,
-                "filtered_score": None,
-            }
-        },
+        "reputation": {"erc8004": _erc8004_block(binding)},
         "verdict": {
             "recommendation": verdict.recommendation,
             "confidence": verdict.confidence,
             "score": verdict.score,
             "reasons": reasons,
         },
+    }
+
+
+def _erc8004_block(binding: Binding | None) -> dict[str, Any]:
+    """The reputation.erc8004 sub-block. All-null when unbound or the feature
+    is off — a stable shape M6 extends with sybil_filtered_count/filtered_score."""
+    empty = {
+        "bound": None if binding is None else False,
+        "agent_id": None,
+        "binding_method": None,
+        "binding_confidence": None,
+        "raw_feedback_count": None,
+        "distinct_reviewers": None,
+        "raw_average_score": None,
+        "sybil_filtered_count": None,  # M6
+        "filtered_score": None,  # M6
+    }
+    if binding is None or not binding.bound or binding.agent is None:
+        return empty
+    reputation = binding.reputation
+    return {
+        "bound": True,
+        "agent_id": binding.agent.agent_id,
+        "binding_method": binding.method,
+        "binding_confidence": binding.confidence,
+        "raw_feedback_count": reputation.raw_feedback_count if reputation else 0,
+        "distinct_reviewers": reputation.distinct_reviewers if reputation else 0,
+        "raw_average_score": reputation.average_score if reputation else None,
+        "sybil_filtered_count": None,  # M6
+        "filtered_score": None,  # M6
     }

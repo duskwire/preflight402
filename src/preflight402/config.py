@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     alchemy_api_key: SecretStr | None = None
     helius_api_key: SecretStr | None = None
 
+    # --- ERC-8004 reputation (M5) ---
+    # The Graph gateway API key for the Agent0 ERC-8004 subgraphs. None means
+    # the binding/reputation feature is OFF: the reputation block stays null
+    # and no subgraph call is made. Get a key at thegraph.com/studio/apikeys.
+    graph_api_key: SecretStr | None = None
+    # Subgraph query timeout; a reputation-read failure must never break the
+    # free preflight, so this stays short and failures degrade to null.
+    graph_timeout_s: float = 8.0
+
     # --- probing ---
     # Off in prod: refuse to probe private/loopback/metadata targets so a
     # public /preflight can't be turned into a LAN/metadata scanner (SSRF).
