@@ -29,46 +29,59 @@ def db(db_path: Path):
 # --- connection + migration ---------------------------------------------------
 
 
+# The version the real package's schema + migrations currently produce.
+CURRENT_VERSION = max(_migration_files(_DB_DIR))
+
+
 def test_migrate_fresh_db(db) -> None:
-    assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert db.execute("PRAGMA user_version").fetchone()[0] == CURRENT_VERSION
     assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     tables = {
         row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
-    assert {"endpoints", "probes", "rollups", "verdict_cache"} <= tables
+    assert {"endpoints", "probes", "rollups", "verdict_cache", "counters"} <= tables
 
 
 def test_migrate_is_idempotent(db) -> None:
-    assert migrate(db) == 1
-    assert migrate(db) == 1
+    assert migrate(db) == CURRENT_VERSION
+    assert migrate(db) == CURRENT_VERSION
 
 
 def _tmp_db_dir(tmp_path: Path) -> Path:
-    """A throwaway db_dir with the real schema.sql and an empty migrations/."""
+    """A throwaway db_dir mirroring the real schema.sql + migrations."""
     db_dir = tmp_path / "dbdir"
     (db_dir / "migrations").mkdir(parents=True)
     shutil.copy(_DB_DIR / "schema.sql", db_dir / "schema.sql")
+    for path in (_DB_DIR / "migrations").glob("*.sql"):
+        shutil.copy(path, db_dir / "migrations" / path.name)
     return db_dir
+
+
+def _add_migration(db_dir: Path, name: str, sql: str) -> int:
+    """Write a custom migration at the next free number; return that number."""
+    number = max(_migration_files(db_dir)) + 1
+    (db_dir / "migrations" / f"{number:04d}_{name}.sql").write_text(sql)
+    return number
 
 
 def test_failed_migration_rolls_back(db, tmp_path: Path) -> None:
     # A migration that half-succeeds must leave no trace: version unchanged,
     # no partially created objects.
     db_dir = _tmp_db_dir(tmp_path)
-    (db_dir / "migrations" / "0002_bad.sql").write_text(
-        "CREATE TABLE half_done (id INTEGER PRIMARY KEY) STRICT;\nTHIS IS NOT SQL;\n"
+    bad = _add_migration(
+        db_dir, "bad", "CREATE TABLE half_done (id INTEGER PRIMARY KEY) STRICT;\nTHIS IS NOT SQL;\n"
     )
     with pytest.raises(sqlite3.OperationalError):
         migrate(db, db_dir=db_dir)
-    assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert db.execute("PRAGMA user_version").fetchone()[0] == bad - 1
     assert not db.in_transaction
     row = db.execute("SELECT name FROM sqlite_master WHERE name = 'half_done'").fetchone()
     assert row is None
     # The connection stays usable and a fixed migration applies cleanly.
-    (db_dir / "migrations" / "0002_bad.sql").write_text(
+    (db_dir / "migrations" / f"{bad:04d}_bad.sql").write_text(
         "CREATE TABLE now_good (id INTEGER PRIMARY KEY) STRICT;\n"
     )
-    assert migrate(db, db_dir=db_dir) == 2
+    assert migrate(db, db_dir=db_dir) == bad
 
 
 def test_migration_files_reject_gaps_and_duplicates(tmp_path: Path) -> None:
@@ -99,14 +112,14 @@ def test_migration_files_reject_gaps_and_duplicates(tmp_path: Path) -> None:
 
 def test_migrate_applies_multiple_pending_in_order(db, tmp_path: Path) -> None:
     db_dir = _tmp_db_dir(tmp_path)
-    (db_dir / "migrations" / "0002_add_notes.sql").write_text(
-        "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT) STRICT;\n"
+    _add_migration(
+        db_dir, "add_notes", "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT) STRICT;\n"
     )
-    # 0003 depends on 0002 having run, so out-of-order application would fail.
-    (db_dir / "migrations" / "0003_extend_notes.sql").write_text(
-        "ALTER TABLE notes ADD COLUMN created_at TEXT;\n"
+    # The second depends on the first having run, so out-of-order would fail.
+    extend = _add_migration(
+        db_dir, "extend_notes", "ALTER TABLE notes ADD COLUMN created_at TEXT;\n"
     )
-    assert migrate(db, db_dir=db_dir) == 3
+    assert migrate(db, db_dir=db_dir) == extend
     columns = {row["name"] for row in db.execute("PRAGMA table_info(notes)")}
     assert {"id", "body", "created_at"} <= columns
 
@@ -118,7 +131,9 @@ def test_migration_table_rebuild_preserves_child_rows(db, tmp_path: Path) -> Non
     endpoint_id = q.upsert_endpoint(db, "https://api.example.com/")
     q.record_probe(db, endpoint_id, ok=True)
     db_dir = _tmp_db_dir(tmp_path)
-    (db_dir / "migrations" / "0002_rebuild_endpoints.sql").write_text(
+    rebuild = _add_migration(
+        db_dir,
+        "rebuild_endpoints",
         "CREATE TABLE endpoints_new (\n"
         "    id             INTEGER PRIMARY KEY,\n"
         "    url            TEXT NOT NULL UNIQUE,\n"
@@ -135,9 +150,9 @@ def test_migration_table_rebuild_preserves_child_rows(db, tmp_path: Path) -> Non
         "    SELECT id, url, host, sources, first_seen_at, last_probed_at,"
         " enabled, meta FROM endpoints;\n"
         "DROP TABLE endpoints;\n"
-        "ALTER TABLE endpoints_new RENAME TO endpoints;\n"
+        "ALTER TABLE endpoints_new RENAME TO endpoints;\n",
     )
-    assert migrate(db, db_dir=db_dir) == 2
+    assert migrate(db, db_dir=db_dir) == rebuild
     assert len(q.latest_probes(db, endpoint_id)) == 1  # cascade did not fire
     assert q.get_endpoint(db, "https://api.example.com/")["id"] == endpoint_id
     # Enforcement is back on after the migration.
@@ -148,12 +163,12 @@ def test_migration_table_rebuild_preserves_child_rows(db, tmp_path: Path) -> Non
 
 def test_migration_leaving_fk_violations_is_rejected(db, tmp_path: Path) -> None:
     db_dir = _tmp_db_dir(tmp_path)
-    (db_dir / "migrations" / "0002_orphan.sql").write_text(
-        "INSERT INTO probes (endpoint_id, ok) VALUES (12345, 1);\n"
+    orphan = _add_migration(
+        db_dir, "orphan", "INSERT INTO probes (endpoint_id, ok) VALUES (12345, 1);\n"
     )
     with pytest.raises(sqlite3.IntegrityError, match="foreign key"):
         migrate(db, db_dir=db_dir)
-    assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert db.execute("PRAGMA user_version").fetchone()[0] == orphan - 1
     assert db.execute("SELECT COUNT(*) FROM probes").fetchone()[0] == 0  # rolled back
 
 

@@ -357,6 +357,28 @@ def get_verdict(
     return _to_dict(row)
 
 
+def bump_counter(
+    conn: sqlite3.Connection, metric: str, *, by: int = 1, now: str | None = None
+) -> None:
+    """Increment a daily usage counter (UTC day taken from `now`)."""
+    day = (now or utcnow_iso())[:10]
+    conn.execute(
+        "INSERT INTO counters (day, metric, value) VALUES (?, ?, ?)"
+        " ON CONFLICT (day, metric) DO UPDATE SET value = value + excluded.value",
+        (day, metric, by),
+    )
+
+
+def counters_since(conn: sqlite3.Connection, since_day: str) -> dict[str, dict[str, int]]:
+    """{metric: {day: value}} for days >= since_day (YYYY-MM-DD)."""
+    result: dict[str, dict[str, int]] = {}
+    for row in conn.execute(
+        "SELECT day, metric, value FROM counters WHERE day >= ? ORDER BY day", (since_day,)
+    ):
+        result.setdefault(row["metric"], {})[row["day"]] = row["value"]
+    return result
+
+
 def purge_expired_verdicts(conn: sqlite3.Connection, *, now: str | None = None) -> int:
     """Delete expired cache rows; return how many were removed."""
     cursor = conn.execute("DELETE FROM verdict_cache WHERE expires_at <= ?", (now or utcnow_iso(),))

@@ -1,12 +1,18 @@
+import asyncio
+import time
+
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 from preflight402 import __version__
 from preflight402.api.ratelimit import RateLimiter, RateLimitMiddleware
 from preflight402.config import get_settings
-from preflight402.db import queries
+from preflight402.db import connect, queries
 from preflight402.probe.guard import BlockedTargetError
-from preflight402.service import get_preflight
+from preflight402.service import ensure_migrated, get_preflight
+from preflight402.stats import compute_stats
+
+STATS_CACHE_TTL_S = 60.0
 
 # Resolved at import so misconfiguration fails the boot, not the first request.
 settings = get_settings()
@@ -27,13 +33,46 @@ app.add_middleware(
     RateLimitMiddleware,
     get_limiter=lambda: _limiter,
     get_rate=lambda: settings.rate_limit_per_minute,
-    prefixes=("/preflight",),
+    prefixes=("/preflight", "/stats"),
 )
+
+# /stats aggregates over the whole probes table; one computation per
+# STATS_CACHE_TTL_S serves everyone. Keyed by db_path so tests with distinct
+# databases don't read each other's cached document.
+_stats_cache: dict[str, tuple[float, dict]] = {}
 
 
 @router.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok", "version": __version__, "environment": settings.environment}
+
+
+@router.get("/stats")
+async def stats() -> JSONResponse:
+    """The public dashboard: catalog, probing, ecosystem health, usage.
+
+    stats.v0, additive-only; paid/reputation fields are null until M4/M5.
+    """
+    key = str(settings.db_path)
+    cached = _stats_cache.get(key)
+    if cached is not None and time.monotonic() - cached[0] < STATS_CACHE_TTL_S:
+        return JSONResponse(cached[1], headers={"x-stats-cache": "hit"})
+    # compute_stats scans the whole probes/endpoints tables (~0.9s at a 50k
+    # catalog), so run it off the event loop with its own connection —
+    # sqlite connections are thread-bound. The 60s cache means at most one
+    # such computation per minute even under a burst.
+    document = await asyncio.to_thread(_compute_stats_in_thread, key)
+    _stats_cache[key] = (time.monotonic(), document)
+    return JSONResponse(document, headers={"x-stats-cache": "miss"})
+
+
+def _compute_stats_in_thread(db_path: str) -> dict:
+    ensure_migrated(db_path)
+    conn = connect(db_path)
+    try:
+        return compute_stats(conn)
+    finally:
+        conn.close()
 
 
 @router.get("/preflight")

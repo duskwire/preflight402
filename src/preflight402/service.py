@@ -87,6 +87,11 @@ def _cached_document(canonical: str, settings: Settings) -> dict[str, Any] | Non
     conn = connect(settings.db_path)
     try:
         cached = queries.get_verdict(conn, canonical, "preflight")
+        # Every preflight (REST and MCP) passes through here exactly once,
+        # making it the single point to meter usage for the dashboard.
+        queries.bump_counter(conn, "preflight_calls")
+        if cached is not None:
+            queries.bump_counter(conn, "preflight_cache_hits")
         return cached["verdict"] if cached is not None else None
     finally:
         conn.close()

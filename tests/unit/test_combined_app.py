@@ -38,6 +38,14 @@ def test_invalid_preflight_url_is_400(client: TestClient) -> None:
     assert client.get("/preflight", params={"url": "junk"}).status_code == 400
 
 
+def test_stats_is_served_on_the_deployment_app(client: TestClient) -> None:
+    # /stats is the dashboard surface; production runs api.app, not rest.app.
+    response = client.get("/stats")
+    assert response.status_code == 200
+    assert response.json()["schema"] == "stats.v0"
+    assert response.headers["x-stats-cache"] in {"hit", "miss"}
+
+
 def test_mcp_endpoint_answers_initialize(client: TestClient) -> None:
     # stateless_http + json_response means a bare JSON-RPC POST gets a JSON
     # reply — enough to prove the /mcp mount and session-manager lifespan
