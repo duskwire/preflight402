@@ -135,6 +135,10 @@ def _parse_agent(row: dict) -> AgentIdentity:
 
 
 def _summarize_feedback(rows: list[dict]) -> ReputationSummary:
+    # `value` is the subgraph's already-normalized BigDecimal score (0-100 range
+    # observed live). On-chain the score is fixed-point (value:int128 /
+    # 10^valueDecimals) — if this ever reads raw RPC instead of the subgraph, it
+    # MUST divide by valueDecimals per entry (Research4-M6-sybil.md §2).
     reviewers: set[str] = set()
     scores: list[float] = []
     tag_counts: dict[str, int] = {}
