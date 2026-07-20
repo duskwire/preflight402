@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 
 from preflight402.config import Settings
 from preflight402.reputation.subgraph import SubgraphClient
-from preflight402.reputation.types import UNBOUND, AgentIdentity, Binding
+from preflight402.reputation.types import BINDING_ERROR, UNBOUND, AgentIdentity, Binding
 
 BASE_CHAIN_ID = 8453
 
@@ -46,6 +46,11 @@ async def resolve_binding(
         settings.graph_api_key.get_secret_value(), timeout_s=settings.graph_timeout_s
     )
     candidates = await client.agents_by_wallet(BASE_CHAIN_ID, pay_to)
+    if candidates is None:
+        # The subgraph call failed (rate-limit/network/GraphQL) — binding is
+        # UNKNOWN. Never report this as "no agent"; the shared key exhausts
+        # under load and that must not masquerade as a real no-match.
+        return BINDING_ERROR
     if not candidates:
         return UNBOUND
 
@@ -59,6 +64,7 @@ async def resolve_binding(
 
     return Binding(
         bound=True,
+        status="bound",
         agent=chosen,
         method=method,
         confidence=confidence,

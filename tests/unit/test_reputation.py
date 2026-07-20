@@ -92,29 +92,38 @@ async def test_client_summarizes_feedback() -> None:
 
 
 @respx.mock
-async def test_client_never_raises_on_http_error() -> None:
+async def test_client_returns_none_on_http_error() -> None:
+    # None = "could not check" (NOT an empty match); never raises
     respx.post(GW).mock(return_value=httpx.Response(500))
-    assert await SubgraphClient(KEY).agents_by_wallet(BASE, WALLET) == []
+    assert await SubgraphClient(KEY).agents_by_wallet(BASE, WALLET) is None
     assert await SubgraphClient(KEY).reputation_summary(BASE, "8453:1") is None
 
 
 @respx.mock
-async def test_client_never_raises_on_graphql_errors() -> None:
+async def test_client_returns_none_on_graphql_errors() -> None:
     respx.post(GW).mock(return_value=httpx.Response(200, json={"errors": [{"message": "bad"}]}))
-    assert await SubgraphClient(KEY).agents_by_wallet(BASE, WALLET) == []
+    assert await SubgraphClient(KEY).agents_by_wallet(BASE, WALLET) is None
 
 
 @respx.mock
-async def test_client_never_raises_on_non_http_exception() -> None:
+async def test_client_returns_none_on_non_http_exception() -> None:
     # a reputation read must never break the preflight, even on exception types
     # outside httpx.HTTPError (e.g. a transport raising ValueError/InvalidURL)
     respx.post(GW).mock(side_effect=RuntimeError("unexpected"))
-    assert await SubgraphClient(KEY).agents_by_wallet(BASE, WALLET) == []
+    assert await SubgraphClient(KEY).agents_by_wallet(BASE, WALLET) is None
     assert await SubgraphClient(KEY).reputation_summary(BASE, "8453:1") is None
 
 
-async def test_client_unknown_chain_returns_empty() -> None:
-    assert await SubgraphClient(KEY).agents_by_wallet(999999, WALLET) == []
+@respx.mock
+async def test_client_empty_list_is_a_genuine_no_match() -> None:
+    # a successful query with no agents is [] (checked, nothing) — distinct
+    # from None (failed). This is the whole point of the observability fix.
+    respx.post(GW).mock(return_value=httpx.Response(200, json={"data": {"agents": []}}))
+    assert await SubgraphClient(KEY).agents_by_wallet(BASE, WALLET) == []
+
+
+async def test_client_unknown_chain_returns_none() -> None:
+    assert await SubgraphClient(KEY).agents_by_wallet(999999, WALLET) is None
 
 
 # --- binding engine ----------------------------------------------------------
@@ -136,6 +145,21 @@ async def test_binding_unbound_when_checked_but_no_match() -> None:
     graphql_mock([])
     result = await resolve_binding(WALLET, "https://x.example/y", settings())
     assert result is UNBOUND
+    assert result.status == "unbound"
+
+
+@respx.mock
+async def test_binding_error_when_subgraph_fails_not_a_false_no_match() -> None:
+    # THE observability fix: a failed subgraph call must NOT masquerade as
+    # "no agent". It returns the error state (bound False but status 'error'),
+    # which the schema surfaces as bound=null, not bound=false.
+    from preflight402.reputation.types import BINDING_ERROR
+
+    respx.post(GW).mock(return_value=httpx.Response(403))  # rate-limited / exhausted key
+    result = await resolve_binding(WALLET, "https://clawnews.io/x", settings())
+    assert result is BINDING_ERROR
+    assert result.status == "error"
+    assert result.bound is False  # internal flag; schema maps this status to null
 
 
 @respx.mock
@@ -208,11 +232,12 @@ async def test_binding_skips_reputation_when_no_feedback() -> None:
 # --- schema block ------------------------------------------------------------
 
 
-def test_schema_block_null_when_no_binding() -> None:
+def test_schema_block_not_checked_when_no_binding() -> None:
     from preflight402.verdict.schema import _erc8004_block
 
     block = _erc8004_block(None)
     assert block["bound"] is None
+    assert block["binding_status"] == "not_checked"
     assert block["sybil_filtered_count"] is None
 
 
@@ -220,7 +245,20 @@ def test_schema_block_unbound() -> None:
     from preflight402.verdict.schema import _erc8004_block
 
     block = _erc8004_block(UNBOUND)
-    assert block["bound"] is False
+    assert block["bound"] is False  # genuine "checked, no agent"
+    assert block["binding_status"] == "unbound"
+    assert block["agent_id"] is None
+
+
+def test_schema_block_error_reports_null_not_false() -> None:
+    # the observability fix at the API surface: a failed lookup is bound=null
+    # with binding_status "error" — never a misleading bound=false
+    from preflight402.reputation.types import BINDING_ERROR
+    from preflight402.verdict.schema import _erc8004_block
+
+    block = _erc8004_block(BINDING_ERROR)
+    assert block["bound"] is None
+    assert block["binding_status"] == "error"
     assert block["agent_id"] is None
 
 
@@ -230,6 +268,7 @@ def test_schema_block_populated_from_binding() -> None:
 
     binding = Binding(
         bound=True,
+        status="bound",
         agent=AgentIdentity(
             global_id="8453:1",
             chain_id=8453,
@@ -325,3 +364,54 @@ async def test_preflight_reputation_null_when_feature_off(tmp_path, monkeypatch)
     service.ensure_migrated.cache_clear()
     result = await service.get_preflight("http://plain.example/x", st)
     assert result.document["reputation"]["erc8004"]["bound"] is None
+    assert result.document["reputation"]["erc8004"]["binding_status"] == "not_checked"
+
+
+@respx.mock
+async def test_preflight_reputation_error_is_not_a_false_unbound(tmp_path, monkeypatch) -> None:
+    # end-to-end: feature ON, real payment endpoint, but the subgraph is
+    # rate-limited (403). The block must say bound=null + status=error, NOT
+    # bound=false — the exact silent-misreport this fix prevents.
+    import base64
+    import json
+
+    from preflight402 import service
+    from preflight402.probe.prober import ProbeResult
+    from preflight402.probe.tls import TLSInfo
+
+    payload = {
+        "x402Version": 2,
+        "resource": {"url": "https://pay.example/x402"},
+        "accepts": [
+            {
+                "scheme": "exact",
+                "network": "eip155:8453",
+                "amount": "10000",
+                "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+                "payTo": WALLET,
+                "maxTimeoutSeconds": 300,
+            }
+        ],
+    }
+    headers = {"payment-required": base64.b64encode(json.dumps(payload).encode()).decode()}
+
+    async def stub_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+        return ProbeResult(
+            url=url,
+            ok=True,
+            http_status=402,
+            headers=headers,
+            body="{}",
+            latency_ms=100.0,
+            tls=TLSInfo(valid=True, expires_at="2027-01-01T00:00:00.000Z", issuer="LE"),
+        )
+
+    monkeypatch.setattr(service, "probe", stub_probe)
+    respx.post(GW).mock(return_value=httpx.Response(403))  # exhausted shared key
+
+    st = settings(db_path=tmp_path / "err.db", allow_private_targets=True)
+    service.ensure_migrated.cache_clear()
+    result = await service.get_preflight("https://pay.example/x402", st)
+    erc = result.document["reputation"]["erc8004"]
+    assert erc["bound"] is None  # unknown, NOT a false "no agent"
+    assert erc["binding_status"] == "error"

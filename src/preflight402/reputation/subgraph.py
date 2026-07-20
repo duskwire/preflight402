@@ -81,8 +81,15 @@ class SubgraphClient:
         data = payload.get("data")
         return data if isinstance(data, dict) else None
 
-    async def agents_by_wallet(self, chain_id: int, wallet: str) -> list[AgentIdentity]:
-        """Agents whose on-chain agentWallet equals `wallet` (lowercased)."""
+    async def agents_by_wallet(
+        self, chain_id: int, wallet: str
+    ) -> list[AgentIdentity] | None:
+        """Agents whose on-chain agentWallet equals `wallet` (lowercased).
+
+        Returns None when the query FAILED (network/GraphQL/rate-limit error) —
+        the caller must NOT treat that as "no agent". An empty list means the
+        query succeeded and genuinely matched nothing.
+        """
         query = f"""
             query ByWallet($wallet: Bytes!) {{
                 agents(where: {{ agentWallet: $wallet }}, first: 20) {{ {_AGENT_FIELDS} }}
@@ -90,7 +97,7 @@ class SubgraphClient:
         """
         data = await self._query(chain_id, query, {"wallet": wallet.lower()})
         if data is None:
-            return []
+            return None
         return [_parse_agent(row) for row in data.get("agents", []) if isinstance(row, dict)]
 
     async def reputation_summary(self, chain_id: int, global_id: str) -> ReputationSummary | None:

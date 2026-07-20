@@ -144,10 +144,20 @@ def build_trust_preview(
 
 
 def _erc8004_block(binding: Binding | None) -> dict[str, Any]:
-    """The reputation.erc8004 sub-block. All-null when unbound or the feature
-    is off — a stable shape M6 extends with sybil_filtered_count/filtered_score."""
-    empty = {
-        "bound": None if binding is None else False,
+    """The reputation.erc8004 sub-block. `binding_status` is the honest signal so
+    a failed subgraph lookup is never reported as a real "no agent":
+      None binding  -> not_checked (feature off / no payTo): bound=null
+      status error  -> could not determine (subgraph failed): bound=null
+      status unbound-> checked, no agent: bound=false
+      status bound  -> bound=true, populated
+    Stable shape M6 extends with sybil_filtered_count/filtered_score."""
+    status = "not_checked" if binding is None else binding.status
+    # bound is only a definite boolean when we actually determined it; a failed
+    # lookup leaves it null (unknown), never a misleading False.
+    bound = {"bound": True, "unbound": False}.get(status) if binding else None
+    block = {
+        "bound": bound,
+        "binding_status": status,
         "agent_id": None,
         "binding_method": None,
         "binding_confidence": None,
@@ -157,17 +167,17 @@ def _erc8004_block(binding: Binding | None) -> dict[str, Any]:
         "sybil_filtered_count": None,  # M6
         "filtered_score": None,  # M6
     }
-    if binding is None or not binding.bound or binding.agent is None:
-        return empty
+    if binding is None or binding.status != "bound" or binding.agent is None:
+        return block
     reputation = binding.reputation
-    return {
-        "bound": True,
-        "agent_id": binding.agent.agent_id,
-        "binding_method": binding.method,
-        "binding_confidence": binding.confidence,
-        "raw_feedback_count": reputation.raw_feedback_count if reputation else 0,
-        "distinct_reviewers": reputation.distinct_reviewers if reputation else 0,
-        "raw_average_score": reputation.average_score if reputation else None,
-        "sybil_filtered_count": None,  # M6
-        "filtered_score": None,  # M6
-    }
+    block.update(
+        {
+            "agent_id": binding.agent.agent_id,
+            "binding_method": binding.method,
+            "binding_confidence": binding.confidence,
+            "raw_feedback_count": reputation.raw_feedback_count if reputation else 0,
+            "distinct_reviewers": reputation.distinct_reviewers if reputation else 0,
+            "raw_average_score": reputation.average_score if reputation else None,
+        }
+    )
+    return block

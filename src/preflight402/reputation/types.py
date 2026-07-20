@@ -45,9 +45,20 @@ class ReputationSummary:
 
 @dataclass(slots=True)
 class Binding:
-    """The result of binding a probed endpoint to an ERC-8004 identity."""
+    """The result of binding a probed endpoint to an ERC-8004 identity.
+
+    `status` is the honest signal (never conflates failure with no-match):
+      "bound"   — a matching agent was found (bound=True).
+      "unbound" — the subgraph was queried and returned no agent (bound=False).
+      "error"   — the subgraph call FAILED, so we could not determine binding
+                  (bound=False, but the API must surface this as unknown, not
+                  a real "no such agent").
+    resolve_binding() returns None (not a Binding) when it did not check at all
+    (feature off / no payTo).
+    """
 
     bound: bool
+    status: str = "unbound"  # bound | unbound | error
     agent: AgentIdentity | None = None
     # "agent_wallet" (payTo reverse-match) | "endpoint" (service-URL match) |
     # "agent_wallet+endpoint" (both) — None when unbound.
@@ -58,4 +69,6 @@ class Binding:
     ambiguous_agent_ids: list[str] = field(default_factory=list)
 
 
-UNBOUND = Binding(bound=False)
+UNBOUND = Binding(bound=False, status="unbound")
+# The subgraph could not be reached/queried — binding is UNKNOWN, not "no agent".
+BINDING_ERROR = Binding(bound=False, status="error")
