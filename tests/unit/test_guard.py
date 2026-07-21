@@ -382,3 +382,117 @@ async def test_cache_does_not_mix_different_local_terms() -> None:
     spoofed = await cached_guard.check(URL, local_pay_to="0x" + "99" * 20)
     assert spoofed.allowed is False  # must not reuse the clean cached decision
     assert route.call_count == 2
+
+
+# --- review fixes: ceiling fail-closed, crash-safety, exit order, dispatch ------
+
+
+def _ctx(network: str, asset: str, amount: str, url: str = URL, pay_to: str = "0x" + "ab" * 20):
+    from x402.schemas import (
+        PaymentCreationContext,
+        PaymentRequired,
+        PaymentRequirements,
+        ResourceInfo,
+    )
+
+    pr = PaymentRequired(
+        accepts=[
+            PaymentRequirements(
+                scheme="exact",
+                network=network,
+                asset=asset,
+                amount=amount,
+                pay_to=pay_to,
+                max_timeout_seconds=300,
+            )
+        ],
+        resource=ResourceInfo(url=url),
+    )
+    return PaymentCreationContext(payment_required=pr, selected_requirements=pr.accepts[0])
+
+
+@respx.mock
+async def test_ceiling_fails_closed_on_unpriceable_selected_asset() -> None:
+    # An unlisted rail (some random ERC-20) that the scanner saw at $0.01 but
+    # whose selected amount we can't price: the ceiling must NOT trust the
+    # scanner price — block instead (the scanner-vs-payer bypass).
+    mock_verdict(doc("proceed", endpoint__price={"usd_estimate": 0.01}))
+    ctx = _ctx("eip155:8453", "0x" + "de" * 20, "5000000000")
+    result = await guard(max_price_usd=1.0).hook(ctx)
+    assert result is not None
+    assert "cannot verify the price" in result.reason
+
+
+@respx.mock
+async def test_ceiling_priced_across_more_stablecoins() -> None:
+
+    # Arbitrum USDC $6 now prices (table expanded) -> blocks under a $1 ceiling.
+    mock_verdict(doc("proceed"))
+    ctx = _ctx("eip155:42161", "0xaf88d065e77c8cc2239327c5edb3a432268e5831", "6000000")
+    result = await guard(max_price_usd=1.0).hook(ctx)
+    assert result is not None and "6" in result.reason
+    # DAI (18 decimals) prices correctly too
+    ctx_dai = _ctx("eip155:1", "0x6b175474e89094c44da98b954eedeac495271d0f", "3" + "0" * 18)
+    price, unpriceable = guard()._selected_price(ctx_dai)
+    assert price == 3.0 and unpriceable is False
+
+
+@respx.mock
+async def test_usd_assets_override_extends_pricing() -> None:
+    mock_verdict(doc("proceed"))
+    custom = {("eip155:8453", "0x" + "de" * 20): 6}
+    ctx = _ctx("eip155:8453", "0x" + "DE" * 20, "9000000")  # $9 on a custom asset
+    result = await guard(max_price_usd=1.0, usd_assets=custom).hook(ctx)
+    assert result is not None and "9" in result.reason
+
+
+@respx.mock
+async def test_unicode_digit_amount_does_not_crash_the_hook() -> None:
+    # amount='²' passes str.isdigit() but int() would raise — must be treated
+    # as unpriceable, never propagate a ValueError out of the payment path.
+    mock_verdict(doc("proceed"))
+    ctx = _ctx("eip155:8453", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "²")
+    price, unpriceable = guard()._selected_price(ctx)
+    assert price is None and unpriceable is True
+    # with a ceiling set, an unpriceable term fails closed rather than crashing
+    result = await guard(max_price_usd=1.0).hook(ctx)
+    assert result is not None
+
+
+@respx.mock
+async def test_assert_allowed_runs_payee_check_when_terms_passed() -> None:
+    mock_verdict(doc("proceed", endpoint__pay_to="0x" + "11" * 20))
+    with pytest.raises(PaymentBlocked):
+        await guard().assert_allowed(URL, local_pay_to="0x" + "22" * 20)
+    # and honors a passed price ceiling
+    with pytest.raises(PaymentBlocked):
+        await guard(max_price_usd=1.0).assert_allowed(URL, local_price_usd=5.0)
+
+
+@respx.mock
+def test_cli_service_refusal_is_exit_2_not_3(monkeypatch, capsys) -> None:
+    from preflight402_guard import cli
+
+    respx.get(CHECK).mock(return_value=httpx.Response(403))  # SSRF/invalid-URL refusal
+    monkeypatch.setattr("sys.argv", ["preflight402-guard", "check", URL, "--service", SERVICE])
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+    assert excinfo.value.code == 2  # blocked, not "no verdict"
+    assert "BLOCK" in capsys.readouterr().out
+
+
+@respx.mock
+async def test_install_dispatches_by_structure_for_sync_subclass() -> None:
+    from x402 import x402ClientSync
+    from x402.schemas import PaymentAbortedError
+
+    class MySync(x402ClientSync):
+        pass
+
+    mock_verdict(doc("avoid"))
+    client = guard().install(MySync())
+    client.register("eip155:8453", StubScheme())
+    # a sync subclass must get the SYNC hook — else this raises the SDK's
+    # "async hooks not supported" TypeError instead of a clean abort
+    with pytest.raises(PaymentAbortedError):
+        client.create_payment_payload(_payment_required())

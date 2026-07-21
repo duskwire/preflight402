@@ -58,10 +58,12 @@ def main() -> None:
         for reason in decision.reasons:
             print(f"  - {reason}")
 
-    if decision.recommendation is None:
-        raise SystemExit(3)
+    # A hard block (e.g. the service REFUSED the URL as invalid/SSRF) is exit 2
+    # even though it carries no verdict — check allowed before no-verdict.
     if not decision.allowed:
         raise SystemExit(2)
+    if decision.recommendation is None:
+        raise SystemExit(3)
     raise SystemExit(1 if decision.action == "warn" else 0)
 
 
