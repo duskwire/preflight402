@@ -1,78 +1,71 @@
 # Directory listing checklist (M2.3)
 
-The repo artifacts are in place: [`server.json`](../server.json) (official MCP
-Registry manifest) and [`glama.json`](../glama.json) (Glama). The steps below
-need your accounts, so they're written to hand off. Formats verified 2026-07-16.
+Status as of 2026-07-21 — several steps are DONE; the rest are website forms
+that need an interactive login, written to hand off.
 
-**Do the official registry first** — PulseMCP auto-ingests from it and Glama/
-Smithery increasingly reference it, so one publish cascades.
+## 0. GitHub — ✅ DONE
 
-## 0. Prerequisite: publish the repo to GitHub
+Public at <https://github.com/duskwire/preflight402> (duskwire org, maintainer
+account `sodadsmc`).
 
-Directories crawl/link the repo. `gh`'s token here is invalid, so from a machine
-where you're authed:
+## 1. Official MCP Registry — ✅ DONE
 
-```sh
-gh repo create <you>/preflight402 --public --source . --push
-```
-
-Home resolved 2026-07-21: the repo lives under the `duskwire` org
-(maintainer account `sodadsmc`); `server.json`, `glama.json`,
-`pyproject.toml`, and both `USER_AGENT` strings already point there.
-
-## 1. Official MCP Registry  →  `server.json` is ready
-
-We namespaced under your domain (`io.ironshell/preflight402`) so you can use DNS
-auth — no dependence on the GitHub handle.
+Published as **`io.ironshell/preflight402`** via DNS-verified domain auth
+(`ironshell.io` TXT record `v=MCPv1; k=ed25519; …`, added through the
+Cloudflare API). Verify:
 
 ```sh
-brew install mcp-publisher          # or grab the release binary
-mcp-publisher login dns --domain ironshell.io   # add the TXT record it prints
-mcp-publisher publish                # pushes server.json
-curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=preflight402"
+curl "https://registry.modelcontextprotocol.io/v0/servers?search=preflight402"
 ```
 
-(You control `ironshell.io` DNS in Cloudflare now, so the TXT record is a
-one-liner. Prefer GitHub auth instead? Change `name` to
-`io.github.<you>/preflight402` and run `mcp-publisher login github`.)
+To publish a new version later: bump `version` in `server.json`, then from a
+box with the DNS-auth Ed25519 private key (kept out of the repo):
 
-## 2. Glama  →  automatic
+```sh
+mcp-publisher login dns --domain ironshell.io --private-key <hex>
+mcp-publisher publish
+```
 
-Glama crawls public GitHub MCP repos within minutes of a push. `glama.json`
-(with your GitHub username in `maintainers`) lets you **claim + customize** the
-auto-created listing at glama.ai — authenticate with GitHub and edit the display
-name/description/category there. Adding an `mcp-server` GitHub topic helps
-discovery.
+## 2. PyPI — ⏳ built, needs a token
 
-## 3. Smithery  →  website, paste the URL
+Both wheels build and pass `twine check`:
+- `preflight402` (the MCP server; enables `uvx --from preflight402 preflight402-mcp`)
+- `preflight402-guard` (the client-side payment guard; `pip install preflight402-guard`)
 
-No repo file needed for a hosted server:
+To publish, from a checkout with a PyPI API token in `~/.pypirc` or `TWINE_*`:
 
-1. Go to <https://smithery.ai/new>
+```sh
+uv build                              # server -> dist/
+(cd guard && uv build)                # guard  -> dist/ (workspace shares dist/)
+uv run --with twine python -m twine upload dist/*
+```
+
+(The README's `uvx`/`pip install` instructions assume this is done.)
+
+## 3. awesome-agentic-commerce — ✅ PR OPEN
+
+PR <https://github.com/Merit-Systems/awesome-agentic-commerce/pull/492> — two
+entries (Open Source & SDKs + Security & Ops). Awaiting maintainer merge.
+
+## 4. Glama — automatic (claim optional)
+
+Glama crawls public GitHub MCP repos within minutes of a push; `glama.json`
+(maintainer `sodadsmc`) lets you claim + customize the auto-created listing at
+glama.ai — authenticate with GitHub and edit there. Adding an `mcp-server`
+GitHub topic to the repo helps discovery.
+
+## 5. Smithery — website, paste the URL (user step)
+
+1. <https://smithery.ai/new>
 2. Paste `https://preflight402.ironshell.io/mcp`
 3. Smithery auto-scans the endpoint and extracts the `preflight` tool.
 
-## 4. PulseMCP  →  automatic (or form)
+## 6. PulseMCP — automatic (or form)
 
-Ingests the official registry daily (weekly processing), so step 1 covers it.
-To list immediately: <https://www.pulsemcp.com/submit> → provide the repo URL,
-select **Server**.
-
-## 5. awesome-agentic-commerce  →  one-line PR
-
-Repo: <https://github.com/Merit-Systems/awesome-agentic-commerce> (CC0). Add
-under the `### Open Source & SDKs` heading:
-
-```
-- [preflight402](https://github.com/<you>/preflight402) - MCP server exposing a `preflight(url)` tool that returns a trust/health verdict for x402 payment endpoints. Python, stdio + streamable-http. MIT.
-```
-
-Their contributing rule: concise PR description, group under an existing
-section. (Secondary fit: the `### Ecosystem` section, which holds other
-monitoring/trust tools like x402Scan — lead with Open Source & SDKs since this
-is an OSS MCP repo.)
+Ingests the official registry (step 1 covers it, weekly). To list immediately:
+<https://www.pulsemcp.com/submit> → repo URL, select **Server**.
 
 ---
 
-Acceptance (build plan M2.2/2.3): listed in ≥3 directories. Registry + Glama +
-Smithery + PulseMCP + the PR clears that comfortably once the repo is public.
+Acceptance (build plan M2.2/2.3): listed in ≥3 directories. Registry (done) +
+Glama (auto) + the awesome PR already clear it; Smithery + PulseMCP add more.
