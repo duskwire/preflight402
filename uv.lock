@@ -8,6 +8,12 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform != 'win32'",
 ]
 
+[manifest]
+members = [
+    "preflight402",
+    "preflight402-guard",
+]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.4"
@@ -409,6 +415,15 @@ wheels = [
 ]
 
 [[package]]
+name = "nest-asyncio"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/83/f8/51569ac65d696c8ecbee95938f89d4abf00f47d58d48f6fbabfe8f0baefe/nest_asyncio-1.6.0.tar.gz", hash = "sha256:6f172d5449aca15afd6c646851f4e31e02c598d553a667e38cafa997cfec55fe", size = 7418, upload-time = "2024-01-21T14:25:19.227Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a0/c4/c2971a3ba4c6103a3d10c4b0f24f461ddc027f0f09763220cf35ca1401b3/nest_asyncio-1.6.0-py3-none-any.whl", hash = "sha256:87af6efd6b5e897c81050477ef65c62e2b2f35d51703cae01aff2905b1852e1c", size = 5195, upload-time = "2024-01-21T14:25:17.223Z" },
+]
+
+[[package]]
 name = "packaging"
 version = "26.2"
 source = { registry = "https://pypi.org/simple" }
@@ -441,6 +456,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "preflight402-guard", extra = ["x402"] },
     { name = "pytest" },
     { name = "respx" },
     { name = "ruff" },
@@ -459,11 +475,32 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "preflight402-guard", extras = ["x402"], editable = "guard" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "respx", specifier = ">=0.21" },
     { name = "ruff", specifier = ">=0.8" },
     { name = "trustme", specifier = ">=1.1" },
 ]
+
+[[package]]
+name = "preflight402-guard"
+version = "0.1.0"
+source = { editable = "guard" }
+dependencies = [
+    { name = "httpx" },
+]
+
+[package.optional-dependencies]
+x402 = [
+    { name = "x402" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "x402", marker = "extra == 'x402'", specifier = ">=2.16,<3" },
+]
+provides-extras = ["x402"]
 
 [[package]]
 name = "pycparser"
@@ -1129,4 +1166,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c2/b6/b9afed2afadddaf5ebb2afa801abf4b0868f42f8539bfe4b071b5266c9fe/websockets-16.0-cp314-cp314t-win32.whl", hash = "sha256:5a4b4cc550cb665dd8a47f868c8d04c8230f857363ad3c9caf7a0c3bf8c61ca6", size = 178085, upload-time = "2026-01-10T09:23:33.816Z" },
     { url = "https://files.pythonhosted.org/packages/9f/3e/28135a24e384493fa804216b79a6a6759a38cc4ff59118787b9fb693df93/websockets-16.0-cp314-cp314t-win_amd64.whl", hash = "sha256:b14dc141ed6d2dde437cddb216004bcac6a1df0935d79656387bd41632ba0bbd", size = 178531, upload-time = "2026-01-10T09:23:35.016Z" },
     { url = "https://files.pythonhosted.org/packages/6f/28/258ebab549c2bf3e64d2b0217b973467394a9cea8c42f70418ca2c5d0d2e/websockets-16.0-py3-none-any.whl", hash = "sha256:1637db62fad1dc833276dded54215f2c7fa46912301a24bd94d45d46a011ceec", size = 171598, upload-time = "2026-01-10T09:23:45.395Z" },
+]
+
+[[package]]
+name = "x402"
+version = "2.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "nest-asyncio" },
+    { name = "pydantic" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4a/b1/05481caa039b5ccbcece8ea9836ba6859e289c0b34c79bf3aef5aa838599/x402-2.16.0.tar.gz", hash = "sha256:5656f8b3620105816bee4d2af73600b690b11fb77f0927d80694605d14ff483b", size = 2093990, upload-time = "2026-07-17T20:58:40.148Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/92/40/c8fe06cbb7ae616c37c4fdaee581b043dbf0ed594477190cbf8bb1697fe8/x402-2.16.0-py3-none-any.whl", hash = "sha256:8d536571782111dd8781cd4cf36f3b88e4f0b5d17c39251a17b8e655313a89fb", size = 2226699, upload-time = "2026-07-17T20:58:38.595Z" },
 ]

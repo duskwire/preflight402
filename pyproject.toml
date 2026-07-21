@@ -38,7 +38,16 @@ dev = [
     "respx>=0.21",
     "ruff>=0.8",
     "trustme>=1.1",
+    # the client-side guard (guard/) is tested from this suite, with the real
+    # x402 SDK so hook-contract drift breaks loudly here first
+    "preflight402-guard[x402]",
 ]
+
+[tool.uv.workspace]
+members = ["guard"]
+
+[tool.uv.sources]
+preflight402-guard = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

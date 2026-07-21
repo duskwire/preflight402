@@ -1,0 +1,42 @@
+[project]
+name = "preflight402-guard"
+version = "0.1.0"
+description = "Auto-preflight guard for x402 payments: validate any payment endpoint (health, 402 handshake, price sanity, Sybil-filtered ERC-8004 reputation) before your agent pays."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "chadander", email = "chadander@gmail.com" }]
+keywords = ["x402", "agent-payments", "402", "trust", "preflight", "mcp", "web3"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Security",
+]
+dependencies = [
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# The x402 SDK integration (guard.install / guard.hook). The guard's explicit
+# check()/CLI paths work without it.
+x402 = ["x402>=2.16,<3"]
+
+[project.urls]
+Homepage = "https://preflight402.ironshell.io"
+Repository = "https://github.com/duskwire/preflight402"
+Issues = "https://github.com/duskwire/preflight402/issues"
+
+[project.scripts]
+preflight402-guard = "preflight402_guard.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/preflight402_guard"]
