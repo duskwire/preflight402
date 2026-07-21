@@ -153,7 +153,12 @@ def _summarize_feedback(rows: list[dict]) -> ReputationSummary:
     for row in rows:
         value: float | None = None
         with contextlib.suppress(TypeError, ValueError, KeyError):
-            value = float(row["value"])
+            # Clamp to the schema's 0-100 range at ingestion: the on-chain
+            # value is a SIGNED int128 and this is permissionless adversary
+            # input — an out-of-range value (e.g. -1e9) must weigh like an
+            # extreme score, not dominate every mean computed downstream
+            # (raw average AND the M6 filtered score).
+            value = min(100.0, max(0.0, float(row["value"])))
         if value is not None:
             scores.append(value)
         client = row.get("clientAddress")

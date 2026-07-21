@@ -137,17 +137,14 @@ async def _run_preflight(
             # while the numbers themselves stay in the paid deep_report.
             history = rollups.history_stats(conn, endpoint_id)
 
-        verdict = evaluate(
-            result,
-            detection,
-            history=history,
-            first_seen_at=existing["first_seen_at"] if existing else None,
-        )
         # M5: bind the payTo to an ERC-8004 identity + read raw reputation.
         # Feature-gated on graph_api_key and never-raises, so it's a no-op
         # (UNBOUND) when off or when the subgraph is unreachable — the
         # verdict is unaffected either way. Runs only on cache-miss (this
         # path), so the extra subgraph call is not on the hot cached path.
+        # Resolved BEFORE evaluate(): the Sybil-filtered reputation is a
+        # verdict input (M6.3 gates in rules.py); raw reputation still only
+        # populates the block.
         binding = await resolve_binding(payee_address(detection), canonical, settings)
         # M6: Sybil-filter the bound agent's reviewers. Feature-gated on
         # alchemy_api_key and never-raises; `binding` here is always a fresh
@@ -172,6 +169,13 @@ async def _run_preflight(
                 settings,
                 feedback_truncated=truncated,
             )
+        verdict = evaluate(
+            result,
+            detection,
+            history=history,
+            first_seen_at=existing["first_seen_at"] if existing else None,
+            binding=binding,
+        )
         document = build_trust_preview(canonical, result, detection, verdict, binding=binding)
         # No scheduler owns cache housekeeping yet, so reclaim expired rows
         # here — otherwise a flood of unique junk URLs grows verdict_cache

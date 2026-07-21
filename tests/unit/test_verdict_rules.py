@@ -576,3 +576,139 @@ def test_new_provider_gets_flag() -> None:
     verdict = _evaluate(first_seen_at="2026-07-13T12:00:00.000Z")  # 2 days before NOW
     assert "new_provider" in verdict.flags
     assert verdict.recommendation == "caution"
+
+
+# --- M6.3 reputation gates ----------------------------------------------------
+
+
+def _bound(
+    status: str = "complete",
+    count: int = 5,
+    score: float | None = 92.0,
+    scored: int | None = None,
+):
+    from preflight402.reputation.types import Binding, SybilResult
+
+    complete = status.startswith("complete")
+    return Binding(
+        bound=True,
+        status="bound",
+        sybil=SybilResult(
+            status=status,
+            reviewers=count,
+            resolved=count,
+            filtered_count=count if complete else None,
+            filtered_score=score if complete else None,
+            scored_clusters=(count if scored is None else scored) if complete else 0,
+        ),
+    )
+
+
+def test_strong_reputation_upgrades_thin_history_to_proceed() -> None:
+    # Single probe + brand-new provider: both cautions are "we haven't
+    # observed enough", which independent filtered reputation may waive.
+    verdict = _evaluate(first_seen_at="2026-07-14T12:00:00.000Z", binding=_bound())
+    assert verdict.recommendation == "proceed"
+    assert verdict.confidence == "medium"  # the vouch corroborates a lone probe
+    assert verdict.score == 75  # below an observation-earned proceed (80)
+    assert any("strong sybil-filtered reputation" in r for r in verdict.reasons)
+    # the waived caveats stay visible beside the vouch
+    assert any("single probe only" in r for r in verdict.reasons)
+    assert any("new provider" in r for r in verdict.reasons)
+
+
+def test_strong_reputation_never_waives_operational_cautions() -> None:
+    # $2 is above the typical range -> an operational caution that reputation
+    # must NOT waive (only thin-observation cautions are waivable).
+    verdict = _evaluate(detection=_detection(_payload(amount="2000000")), binding=_bound())
+    assert verdict.recommendation == "caution"
+    assert any("outside the typical" in r for r in verdict.reasons)
+
+
+def test_poor_reputation_demotes_proceed_to_caution() -> None:
+    verdict = _evaluate(history=GOOD_HISTORY, binding=_bound(score=25.0))
+    assert verdict.recommendation == "caution"
+    assert any("sybil-filtered reputation is poor" in r for r in verdict.reasons)
+    assert verdict.confidence == "high"  # observation depth is still real
+
+
+def test_poor_reputation_never_forces_avoid_and_rides_along_on_avoid() -> None:
+    # On an otherwise healthy endpoint poor reputation stops at caution; on an
+    # avoid it only adds its reason.
+    healthy = _evaluate(history=GOOD_HISTORY, binding=_bound(score=5.0))
+    assert healthy.recommendation == "caution"
+    dead = _evaluate(
+        _probe(ok=False, error="timeout", http_status=None, tls=None),
+        binding=_bound(score=5.0),
+    )
+    assert dead.recommendation == "avoid"
+
+
+def test_reputation_neutral_band_changes_nothing() -> None:
+    plain = _evaluate(history=GOOD_HISTORY)
+    neutral = _evaluate(history=GOOD_HISTORY, binding=_bound(score=60.0))
+    assert (neutral.recommendation, neutral.confidence, neutral.score) == (
+        plain.recommendation,
+        plain.confidence,
+        plain.score,
+    )
+
+
+def test_too_few_clusters_move_nothing_either_way() -> None:
+    vouch = _evaluate(binding=_bound(count=2, score=99.0))
+    assert vouch.recommendation == "caution"  # single probe stays cautioned
+    smear = _evaluate(history=GOOD_HISTORY, binding=_bound(count=2, score=1.0))
+    assert smear.recommendation == "proceed"  # one hostile cluster can't demote
+
+
+def test_pending_sybil_or_unbound_never_moves_the_verdict() -> None:
+    pending = _evaluate(binding=_bound(status="pending"))
+    assert pending.recommendation == "caution"
+    from preflight402.reputation.types import UNBOUND
+
+    unbound = _evaluate(binding=UNBOUND)
+    assert unbound.recommendation == "caution"
+
+
+def test_truncated_complete_reputation_still_counts() -> None:
+    verdict = _evaluate(
+        first_seen_at="2026-01-01T00:00:00.000Z",
+        binding=_bound(status="complete_truncated", count=12, score=89.7),
+    )
+    assert verdict.recommendation == "proceed"
+
+
+def test_full_health_plus_reputation_reaches_the_cap() -> None:
+    without = _evaluate(history=GOOD_HISTORY)
+    assert (without.recommendation, without.score) == ("proceed", 90)
+    with_rep = _evaluate(history=GOOD_HISTORY, binding=_bound())
+    assert (with_rep.recommendation, with_rep.score) == ("proceed", 95)
+
+
+def test_out_of_range_score_is_clamped_in_band_and_display() -> None:
+    # Adversary-derived numbers: the band comparison and the "/100" reason
+    # must never trust the producer's range (review finding: unbounded
+    # filtered_score). -500 weighs like 0, not like negative infinity.
+    verdict = _evaluate(history=GOOD_HISTORY, binding=_bound(score=-500.0))
+    assert verdict.recommendation == "caution"
+    assert any("(0.0/100" in r for r in verdict.reasons)
+    assert not any("-500" in r for r in verdict.reasons)
+    inflated = _evaluate(history=GOOD_HISTORY, binding=_bound(score=1e9))
+    assert any("(100.0/100" in r for r in inflated.reasons)
+
+
+def test_unscored_padding_clusters_do_not_meet_the_floor() -> None:
+    # Tag-only feedback creates real clusters with no score; padding
+    # filtered_count with them must not let ONE scoring cluster move the
+    # verdict in either direction (review finding: floor over the wrong set).
+    vouch = _evaluate(binding=_bound(count=3, score=99.0, scored=1))
+    assert vouch.recommendation == "caution"  # single probe stays cautioned
+    smear = _evaluate(history=GOOD_HISTORY, binding=_bound(count=3, score=1.0, scored=1))
+    assert smear.recommendation == "proceed"
+
+
+def test_boundary_score_display_does_not_round_across_the_rule() -> None:
+    # 39.7 fired the <40 rule; it must not read "40/100" beside "poor".
+    verdict = _evaluate(history=GOOD_HISTORY, binding=_bound(score=39.7))
+    assert verdict.recommendation == "caution"
+    assert any("(39.7/100" in r for r in verdict.reasons)

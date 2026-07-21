@@ -14,8 +14,10 @@ Confidence rubric (Research3):
   wallet match only ............................. low
   + registration file active .................... medium
   + an advertised endpoint host matches the URL . high
-Reputation is RAW (un-Sybil-filtered): manipulable, so it populates the block
-and adds an honest reason but does not move the recommendation until M6.
+Reputation here is RAW (un-Sybil-filtered): manipulable, so it only populates
+the block. The M6 Sybil filter's numbers (Binding.sybil, attached by the
+service) are what move the recommendation, via the reputation gates in
+verdict/rules.py.
 """
 
 from __future__ import annotations

@@ -57,10 +57,11 @@ async def preflight(
     Probes the URL (no wallet, payment, or auth) and returns a
     trust-preview.v1 verdict: liveness and latency, TLS validity, the 402
     payment handshake with protocol detection (x402 v1/v2, MPP-capable),
-    detected networks/asset/price with a USD estimate, and a
-    proceed / caution / avoid recommendation with human-readable reasons.
-    Paid-tier fields (uptime history, reseller analysis, ERC-8004 reputation)
-    are present but null on the free tier.
+    detected networks/asset/price with a USD estimate, ERC-8004 identity
+    binding with Sybil-filtered reputation for the payee (which can adjust
+    the recommendation), and a proceed / caution / avoid recommendation with
+    human-readable reasons. Paid-tier fields (uptime history, reseller
+    analysis) are present but null on the free tier.
     """
     try:
         result = await get_preflight(url, settings)

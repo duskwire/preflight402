@@ -92,6 +92,24 @@ async def test_client_summarizes_feedback() -> None:
 
 
 @respx.mock
+async def test_client_clamps_out_of_range_feedback_values() -> None:
+    # On-chain value is a SIGNED int128 posted permissionlessly: an extreme
+    # value must weigh like an extreme score, not dominate every downstream
+    # mean (review finding: unbounded filtered_score).
+    graphql_mock(
+        [agent_row()],
+        feedbacks=[
+            {"value": "-1000000000", "clientAddress": "0xAAA"},
+            {"value": "1e18", "clientAddress": "0xBBB"},
+            {"value": "90", "clientAddress": "0xCCC"},
+        ],
+    )
+    summary = await SubgraphClient(KEY).reputation_summary(BASE, "8453:1")
+    assert summary.reviewer_scores == {"0xaaa": [0.0], "0xbbb": [100.0], "0xccc": [90.0]}
+    assert summary.average_score == round((0 + 100 + 90) / 3, 1)
+
+
+@respx.mock
 async def test_client_redacts_api_key_from_failure_logs(caplog) -> None:
     # httpx exception strings embed the gateway URL, which embeds the key.
     respx.post(GW).mock(return_value=httpx.Response(429))
@@ -594,6 +612,54 @@ async def test_preflight_sybil_complete_end_to_end(tmp_path, monkeypatch) -> Non
     assert erc["sybil_status"] == "complete"
     assert erc["sybil_filtered_count"] == 1  # shared funder collapses them
     assert erc["filtered_score"] == 95.0
+
+
+@respx.mock
+async def test_preflight_strong_filtered_reputation_upgrades_verdict(tmp_path, monkeypatch) -> None:
+    # M6.3 end-to-end: three reviewers with three DISTINCT EOA funders = three
+    # independent clusters at 90 avg — enough to waive the thin-history
+    # cautions on a first-ever probe into proceed/medium.
+    import json as jsonlib
+
+    from preflight402 import service
+
+    monkeypatch.setattr(service, "probe", _stub_probe_factory(_x402_headers()))
+    graphql_mock(
+        [agent_row()],
+        feedbacks=[
+            {"value": "90", "clientAddress": "0x" + "a1".rjust(40, "0")},
+            {"value": "85", "clientAddress": "0x" + "a2".rjust(40, "0")},
+            {"value": "95", "clientAddress": "0x" + "a3".rjust(40, "0")},
+        ],
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = jsonlib.loads(request.content)
+        if payload["method"] == "alchemy_getAssetTransfers":
+            target = payload["params"][0]["toAddress"].lower()
+            funder = "0x" + f"f{target[-1]}".rjust(40, "0")  # distinct funder per reviewer
+            transfers = [{"from": funder, "hash": "0x1", "blockNum": "0x10"}]
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": 1, "result": {"transfers": transfers}}
+            )
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": "0x"})
+
+    respx.post(ALCHEMY_URL).mock(side_effect=handler)
+
+    st = settings(
+        db_path=tmp_path / "vouch.db", allow_private_targets=True, alchemy_api_key=ALCHEMY_KEY
+    )
+    service.ensure_migrated.cache_clear()
+    result = await service.get_preflight("https://clawnews.io/api/x402", st)
+    erc = result.document["reputation"]["erc8004"]
+    assert erc["sybil_status"] == "complete"
+    assert erc["sybil_filtered_count"] == 3
+    assert erc["filtered_score"] == 90.0
+    verdict = result.document["verdict"]
+    assert verdict["recommendation"] == "proceed"
+    assert verdict["confidence"] == "medium"
+    assert any("strong sybil-filtered reputation" in r for r in verdict["reasons"])
+    assert any("single probe only" in r for r in verdict["reasons"])
 
 
 @respx.mock

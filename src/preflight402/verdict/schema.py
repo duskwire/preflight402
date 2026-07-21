@@ -1,10 +1,12 @@
 """trust-preview.v1 document assembly.
 
 The free tier returns the full structure with the paid fields null:
-health.history (deep_report), authenticity.reseller_probability
-(trust_verdict), and the reputation counts/score (M5+). Fields are
-additive-only within v1 per the build plan; the formal JSON Schema file
-ships at M8.
+health.history (deep_report) and authenticity.reseller_probability
+(trust_verdict). reputation.erc8004 IS populated on the free tier when a
+binding resolves — raw counts since M5, Sybil-filtered count/score since M6
+— and the filtered numbers feed the verdict via the M6.3 reputation gates
+in verdict/rules.py. Fields are additive-only within v1 per the build plan;
+the formal JSON Schema file ships at M8.
 """
 
 from __future__ import annotations

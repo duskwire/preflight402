@@ -177,7 +177,7 @@ async def _run_pass(
         generation += 1
 
     clusters = _cluster(reviewers, facts, explored, excluded_hubs)
-    filtered_score = _score(clusters, reviewers)
+    filtered_score, scored_clusters = _score(clusters, reviewers)
     queries.bump_counter(conn, "sybil_passes_complete")
     return SybilResult(
         status="complete_truncated" if feedback_truncated else "complete",
@@ -185,6 +185,7 @@ async def _run_pass(
         resolved=len(facts),
         filtered_count=len(clusters),
         filtered_score=filtered_score,
+        scored_clusters=scored_clusters,
         excluded_hub_funders=len(excluded_hubs),
     )
 
@@ -297,13 +298,18 @@ def _cluster(
     return list(groups.values())
 
 
-def _score(clusters: list[list[str]], reviewers: dict[str, list[float]]) -> float | None:
-    """Mean of per-cluster scores, one vote per cluster.
+def _score(
+    clusters: list[list[str]], reviewers: dict[str, list[float]]
+) -> tuple[float | None, int]:
+    """(mean of per-cluster scores, number of clusters that scored).
 
-    A cluster's score is the mean of its member reviewers' mean scores (so a
-    member spamming many feedbacks does not dominate its own cluster).
-    Clusters whose members carry no parseable value are counted in
-    filtered_count but excluded here; None when nothing is scoreable.
+    One vote per cluster; a cluster's score is the mean of its member
+    reviewers' mean scores (so a member spamming many feedbacks does not
+    dominate its own cluster). Clusters whose members carry no parseable
+    value are counted in filtered_count but not here — the scored count is
+    reported separately because the verdict gates must not treat tag-only
+    padding clusters as scoring evidence. Score is (None, 0) when nothing is
+    scoreable.
     """
     cluster_scores: list[float] = []
     for members in clusters:
@@ -313,5 +319,5 @@ def _score(clusters: list[list[str]], reviewers: dict[str, list[float]]) -> floa
         if member_means:
             cluster_scores.append(sum(member_means) / len(member_means))
     if not cluster_scores:
-        return None
-    return round(sum(cluster_scores) / len(cluster_scores), 1)
+        return None, 0
+    return round(sum(cluster_scores) / len(cluster_scores), 1), len(cluster_scores)

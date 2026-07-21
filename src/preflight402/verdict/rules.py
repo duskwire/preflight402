@@ -8,9 +8,20 @@
            plain-HTTP endpoint, price not in a recognized USD asset,
            body-read failure, an above-cap offer beside a cheaper one,
            TLS details unavailable (inspection-side transient).
-- proceed: valid handshake + healthy latency + sane price. (ERC-8004 binding
-           and filtered reputation raise score/confidence at M5+.)
+- proceed: valid handshake + healthy latency + sane price.
 - confidence: low = 1 probe; medium = 2-19; high = >=20 probes over >=7 days.
+
+M6.3 reputation gates: only the Sybil-FILTERED reputation of a BOUND ERC-8004
+identity moves a verdict — raw feedback is manipulable and never does. With
+at least REPUTATION_MIN_CLUSTERS independent reviewer clusters:
+  - a poor filtered score adds a caution (can demote proceed, never forces
+    avoid on its own — a hostile review campaign must not be able to kill an
+    agent through us);
+  - a strong filtered score vouches for the OPERATOR: it waives only the
+    thin-observation cautions (single probe / new provider) into a
+    proceed/medium, because independent reviewers supply the evidence our
+    own probe history hasn't accrued yet. It never waives operational
+    problems (TLS, price, spec deviations, latency).
 
 All USD estimates are v0: a small table of known USD stablecoins at 1:1 plus
 MPP's 'usd' currency (base units = cents). Anything else is honest about
@@ -26,6 +37,7 @@ from datetime import UTC, datetime
 from preflight402.probe.parsers import Detection
 from preflight402.probe.parsers.types import ATOMIC_AMOUNT
 from preflight402.probe.prober import ProbeResult
+from preflight402.reputation.types import Binding
 
 PRICE_AVOID_ABOVE_USD = 5.0
 PRICE_TYPICAL_USD = (0.0001, 1.0)
@@ -38,6 +50,12 @@ HIGH_CONFIDENCE_DAYS = 7
 DEAD_CONSECUTIVE_FAILS = 3  # trailing transport failures -> flag `dead`
 ZOMBIE_CONSECUTIVE_NON402 = 3  # trailing answered-but-no-402 -> flag `zombie`
 DECOY_PRICE_EXTREME_USD = 50.0  # 10x the avoid cap -> flag `decoy_price_extreme`
+# M6.3 reputation gates. The cluster floor keeps a single (possibly hostile,
+# possibly self-serving) reviewer cluster from moving a verdict in either
+# direction; between the two score bands reputation is deliberately neutral.
+REPUTATION_MIN_CLUSTERS = 3
+REPUTATION_GOOD_SCORE = 80.0
+REPUTATION_BAD_SCORE = 40.0
 
 USDC_BASE = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
 USDC_POLYGON = "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359"
@@ -104,12 +122,15 @@ def evaluate(
     *,
     history: HistoryStats | None = None,
     first_seen_at: str | None = None,
+    binding: Binding | None = None,
     now: str | None = None,
 ) -> Verdict:
     """Apply the v0 rules table. Worst triggered tier wins.
 
     `now` (canonical ISO string) is injectable for tests; wall clock
     otherwise. `first_seen_at` comes from the endpoints row when known.
+    `binding` (M5/M6) contributes only its Sybil-filtered reputation, per the
+    module docstring's reputation gates.
     """
     now_dt = _parse_ts(now) or datetime.now(UTC)
     avoid: list[str] = []
@@ -250,10 +271,14 @@ def evaluate(
             positive.append(f"responded in {probe.latency_ms:.0f}ms")
 
     # --- history depth + provider age ---
+    # These two cautions say "WE haven't observed enough yet", not "something
+    # is wrong" — they are the only cautions strong filtered reputation may
+    # waive below.
+    thin_observation: list[str] = []
     probe_count = history.probe_count if history is not None else 1
     observed_days = history.observed_days if history is not None else 0.0
     if probe_count <= 1:
-        caution.append("single probe only (no history)")
+        thin_observation.append("single probe only (no history)")
     elif history is not None and history.uptime_7d is not None:
         positive.append(f"{history.uptime_7d:.1f}% uptime over 7d")
 
@@ -261,8 +286,44 @@ def evaluate(
     if first_seen_dt is not None:
         age_days = (now_dt - first_seen_dt).total_seconds() / 86400
         if age_days < NEW_PROVIDER_DAYS:
-            caution.append(f"new provider (first seen {math.floor(max(age_days, 0))} days ago)")
+            thin_observation.append(
+                f"new provider (first seen {math.floor(max(age_days, 0))} days ago)"
+            )
             flags.append("new_provider")
+    caution.extend(thin_observation)
+
+    # --- ERC-8004 reputation (M6.3 gates, see module docstring) ---
+    # Gate on SCORED clusters (not filtered_count): tag-only feedback creates
+    # real clusters with no score, and padding the count with them must not
+    # let a single scoring cluster move a verdict.
+    sybil = binding.sybil if binding is not None and binding.status == "bound" else None
+    reputation_vouches = False
+    if (
+        sybil is not None
+        and sybil.status.startswith("complete")
+        and sybil.filtered_score is not None
+        and sybil.scored_clusters >= REPUTATION_MIN_CLUSTERS
+    ):
+        # Defense-in-depth clamp: ingestion already bounds each feedback value
+        # to 0-100 (subgraph.py), but a band comparison on adversary-derived
+        # numbers must never trust a producer, and the reason string prints
+        # "/100".
+        filtered = min(100.0, max(0.0, sybil.filtered_score))
+        clusters = f"{sybil.scored_clusters} independent reviewer clusters"
+        if filtered < REPUTATION_BAD_SCORE:
+            # :.1f, not :.0f — a 39.7 must not read "40/100" beside a rule
+            # that fired at <40 (same convention as _fmt_usd and the TLS
+            # floor()).
+            caution.append(
+                f"bound agent's sybil-filtered reputation is poor"
+                f" ({filtered:.1f}/100 across {clusters})"
+            )
+        elif filtered >= REPUTATION_GOOD_SCORE:
+            reputation_vouches = True
+            positive.append(
+                f"bound agent has strong sybil-filtered reputation"
+                f" ({filtered:.1f}/100 across {clusters})"
+            )
 
     # --- roll up ---
     if avoid:
@@ -270,15 +331,25 @@ def evaluate(
         reasons = avoid + caution
         score = max(5, 20 - 5 * (len(avoid) - 1))
     elif caution:
-        recommendation = "caution"
-        reasons = caution
-        score = max(30, 65 - 10 * (len(caution) - 1))
+        if reputation_vouches and all(reason in thin_observation for reason in caution):
+            # Independent reviewers supply the evidence our own history
+            # hasn't accrued yet — but only the thin-observation cautions are
+            # waivable, and the caveats stay visible beside the vouch.
+            recommendation = "proceed"
+            reasons = positive + caution
+            score = 75
+        else:
+            recommendation = "caution"
+            reasons = caution
+            score = max(30, 65 - 10 * (len(caution) - 1))
     else:
         recommendation = "proceed"
         reasons = positive
         score = 80
         if history is not None and (history.uptime_7d or 0) >= 99.0:
             score += 5
+        if reputation_vouches:
+            score += 5  # the reserved reputation points (score cap stays 95)
 
     if probe_count >= HIGH_CONFIDENCE_PROBES and observed_days >= HIGH_CONFIDENCE_DAYS:
         confidence = "high"
@@ -288,11 +359,15 @@ def evaluate(
         confidence = "medium"
     else:
         confidence = "low"
+    if reputation_vouches and recommendation == "proceed" and confidence == "low":
+        # The vouch is real corroborating evidence from an independent source;
+        # a reputation-upgraded proceed must not read as "low confidence".
+        confidence = "medium"
 
     return Verdict(
         recommendation=recommendation,
         confidence=confidence,
-        score=min(score, 95),  # the last few points belong to M5+ reputation
+        score=min(score, 95),
         reasons=reasons,
         is_payment_endpoint=is_payment,
         price_usd=price_usd,

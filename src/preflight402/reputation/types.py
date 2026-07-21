@@ -67,6 +67,11 @@ class SybilResult:
     resolved: int  # permanent funding facts held (reviewers + explored ancestry)
     filtered_count: int | None = None  # independent clusters (one vote each)
     filtered_score: float | None = None  # mean of per-cluster mean scores
+    # Clusters that actually contributed to filtered_score (members with a
+    # parseable value). The verdict gates use THIS, not filtered_count: tag-only
+    # feedback creates real clusters with no score, and padding the count with
+    # them must not let a single scoring cluster move a verdict.
+    scored_clusters: int = 0
     excluded_hub_funders: int = 0  # funders refused as cluster edges (labels/fan-out)
 
 
