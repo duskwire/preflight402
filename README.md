@@ -42,7 +42,7 @@ curl 'https://preflight402.ironshell.io/preflight?url=https://api.example.com/pa
 default-on instead of something an agent has to remember to call:
 
 ```sh
-pip install "preflight402-guard[x402]"
+pip install "preflight402-guard[x402]"   # PyPI publish pending; for now: pip install "git+https://github.com/duskwire/preflight402.git#subdirectory=guard"
 ```
 
 ```python
@@ -82,10 +82,12 @@ Easiest — point any MCP client at the hosted instance, no install:
 https://preflight402.ironshell.io/mcp   (streamable-http)
 ```
 
-Or run it yourself over stdio. Claude Code — one line:
+Or run it yourself over stdio. Claude Code — one line (PyPI publish pending;
+until then point `--directory` at a clone):
 
 ```sh
 claude mcp add preflight402 -- uvx --from preflight402 preflight402-mcp
+# pre-PyPI: claude mcp add preflight402 -- uv run --directory /path/to/preflight402 preflight402-mcp
 ```
 
 Claude Desktop — add to `claude_desktop_config.json`:
