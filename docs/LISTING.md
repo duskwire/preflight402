@@ -16,9 +16,9 @@ where you're authed:
 gh repo create <you>/preflight402 --public --source . --push
 ```
 
-If your GitHub handle isn't `chadander`, update it in `server.json`,
-`glama.json` (`maintainers`), `pyproject.toml` (`[project.urls]`), and
-`src/preflight402/probe/prober.py` (the `USER_AGENT`) first.
+Home resolved 2026-07-21: the repo lives under the `duskwire` org
+(maintainer account `sodadsmc`); `server.json`, `glama.json`,
+`pyproject.toml`, and both `USER_AGENT` strings already point there.
 
 ## 1. Official MCP Registry  →  `server.json` is ready
 

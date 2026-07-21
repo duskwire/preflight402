@@ -37,7 +37,7 @@ from preflight402.ingest.types import IngestReport, SeedRecord, SourceReport
 # Same shapes scripts/validate_against_reality.py skips: /:param and /{param}.
 TEMPLATE_SEGMENT = re.compile(r"/:[^/]+|/\{[^}]+\}")
 
-USER_AGENT = "preflight402-ingest/0.1 (+https://github.com/chadander/preflight402)"
+USER_AGENT = "preflight402-ingest/0.1 (+https://github.com/duskwire/preflight402)"
 
 ALL_SOURCES: tuple[ModuleType, ...] = (bazaar, agentic_market, x402_list)
 

@@ -30,7 +30,7 @@ _CONN_REFUSED = "conn_refused"
 _PROTOCOL = "protocol"
 _UNKNOWN = "unknown"
 
-USER_AGENT = "preflight402-probe/0.1 (+https://github.com/chadander/preflight402)"
+USER_AGENT = "preflight402-probe/0.1 (+https://github.com/duskwire/preflight402)"
 
 
 @dataclass(slots=True)

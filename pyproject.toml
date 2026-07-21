@@ -26,8 +26,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://preflight402.ironshell.io"
-Repository = "https://github.com/chadander/preflight402"
-Issues = "https://github.com/chadander/preflight402/issues"
+Repository = "https://github.com/duskwire/preflight402"
+Issues = "https://github.com/duskwire/preflight402/issues"
 
 [project.scripts]
 preflight402-mcp = "preflight402.api.mcp_server:main"
