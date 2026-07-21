@@ -385,6 +385,121 @@ def purge_expired_verdicts(conn: sqlite3.Connection, *, now: str | None = None) 
     return cursor.rowcount
 
 
+# --- M6 Sybil filter: first-funder cache -------------------------------------
+
+
+def get_reviewer_funding(
+    conn: sqlite3.Connection, chain_id: int, addresses: list[str]
+) -> dict[str, dict[str, Any]]:
+    """Cached funding facts for the given reviewer addresses, keyed by address.
+
+    Addresses are lowercased on the way in; absent keys mean "never resolved".
+    """
+    result: dict[str, dict[str, Any]] = {}
+    wanted = [address.lower() for address in addresses]
+    # SQLite caps host parameters (999 in older builds); chunk to stay under.
+    for start in range(0, len(wanted), 500):
+        chunk = wanted[start : start + 500]
+        placeholders = ",".join("?" * len(chunk))
+        for row in conn.execute(
+            f"SELECT * FROM reviewer_funding WHERE chain_id = ? AND address IN ({placeholders})",
+            (chain_id, *chunk),
+        ):
+            result[row["address"]] = _to_dict(row)
+    return result
+
+
+def put_reviewer_funding(
+    conn: sqlite3.Connection,
+    chain_id: int,
+    address: str,
+    *,
+    status: str,
+    funder: str | None = None,
+    funder_is_contract: bool | None = None,
+    tx_hash: str | None = None,
+    block_num: int | None = None,
+    now: str | None = None,
+) -> None:
+    """Record one permanent first-funder fact (status 'ok' or 'none').
+
+    Upsert rather than ignore: a first funder never changes, but an earlier
+    row may predate the funder EOA check, and rewriting the same fact is
+    harmless either way.
+    """
+    conn.execute(
+        "INSERT INTO reviewer_funding (chain_id, address, status, funder,"
+        " funder_is_contract, tx_hash, block_num, looked_up_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        " ON CONFLICT (chain_id, address) DO UPDATE SET"
+        " status = excluded.status, funder = excluded.funder,"
+        " funder_is_contract = excluded.funder_is_contract,"
+        " tx_hash = excluded.tx_hash, block_num = excluded.block_num,"
+        " looked_up_at = excluded.looked_up_at",
+        (
+            chain_id,
+            address.lower(),
+            status,
+            funder.lower() if funder else None,
+            None if funder_is_contract is None else int(funder_is_contract),
+            tx_hash,
+            block_num,
+            now or utcnow_iso(),
+        ),
+    )
+
+
+def funder_code_status(conn: sqlite3.Connection, chain_id: int, funder: str) -> bool | None:
+    """A previously recorded EOA-vs-contract verdict for this funder, if any.
+
+    Reviewers sharing a funder each carry funder_is_contract on their own row;
+    reusing any one of them saves an eth_getCode call for later reviewers.
+    """
+    row = conn.execute(
+        "SELECT funder_is_contract FROM reviewer_funding"
+        " WHERE chain_id = ? AND funder = ? AND funder_is_contract IS NOT NULL LIMIT 1",
+        (chain_id, funder.lower()),
+    ).fetchone()
+    return None if row is None else bool(row["funder_is_contract"])
+
+
+def record_reviewer_agents(
+    conn: sqlite3.Connection, chain_id: int, addresses: list[str], agent_global_id: str
+) -> None:
+    """Remember that these reviewers left feedback on this agent."""
+    conn.executemany(
+        "INSERT OR IGNORE INTO reviewer_agents (chain_id, address, agent_global_id)"
+        " VALUES (?, ?, ?)",
+        [(chain_id, address.lower(), agent_global_id) for address in addresses],
+    )
+
+
+def funder_agent_spread(
+    conn: sqlite3.Connection, chain_id: int, funders: list[str]
+) -> dict[str, int]:
+    """How many DISTINCT agents each funder's funded reviewers span.
+
+    The cross-agent fan-out hub signal: a funder whose reviewers reviewed many
+    unrelated agents is infrastructure (CEX/bridge/bundler), not a Sybil
+    farmer. Only funders present in the result were seen at all.
+    """
+    result: dict[str, int] = {}
+    wanted = sorted({funder.lower() for funder in funders})
+    for start in range(0, len(wanted), 500):
+        chunk = wanted[start : start + 500]
+        placeholders = ",".join("?" * len(chunk))
+        for row in conn.execute(
+            "SELECT rf.funder AS funder, COUNT(DISTINCT ra.agent_global_id) AS agents"
+            " FROM reviewer_funding rf"
+            " JOIN reviewer_agents ra ON ra.chain_id = rf.chain_id AND ra.address = rf.address"
+            f" WHERE rf.chain_id = ? AND rf.funder IN ({placeholders})"
+            " GROUP BY rf.funder",
+            (chain_id, *chunk),
+        ):
+            result[row["funder"]] = row["agents"]
+    return result
+
+
 def iso_add_seconds(timestamp: str, seconds: float) -> str:
     result = datetime.fromisoformat(timestamp) + timedelta(seconds=seconds)
     return result.isoformat(timespec="milliseconds").replace("+00:00", "Z")

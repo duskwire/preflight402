@@ -39,7 +39,15 @@ def test_migrate_fresh_db(db) -> None:
     tables = {
         row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
-    assert {"endpoints", "probes", "rollups", "verdict_cache", "counters"} <= tables
+    assert {
+        "endpoints",
+        "probes",
+        "rollups",
+        "verdict_cache",
+        "counters",
+        "reviewer_funding",
+        "reviewer_agents",
+    } <= tables
 
 
 def test_migrate_is_idempotent(db) -> None:
@@ -593,6 +601,95 @@ def test_purge_expired_verdicts(db) -> None:
         row["endpoint_url"] for row in db.execute("SELECT endpoint_url FROM verdict_cache")
     ]
     assert remaining == ["https://b.example/"]
+
+
+# --- M6: reviewer funding cache ------------------------------------------------
+
+BASE = 8453
+
+
+def test_reviewer_funding_roundtrip_and_lowercasing(db) -> None:
+    q.put_reviewer_funding(
+        db,
+        BASE,
+        "0xAAAA000000000000000000000000000000000001",
+        status="ok",
+        funder="0xFFFF000000000000000000000000000000000001",
+        funder_is_contract=False,
+        tx_hash="0xabc",
+        block_num=123,
+    )
+    q.put_reviewer_funding(db, BASE, "0xaaaa000000000000000000000000000000000002", status="none")
+    rows = q.get_reviewer_funding(
+        db,
+        BASE,
+        [
+            "0xAAAA000000000000000000000000000000000001",  # uppercased on the way in
+            "0xaaaa000000000000000000000000000000000002",
+            "0xaaaa000000000000000000000000000000000003",  # never resolved
+        ],
+    )
+    assert set(rows) == {
+        "0xaaaa000000000000000000000000000000000001",
+        "0xaaaa000000000000000000000000000000000002",
+    }
+    ok = rows["0xaaaa000000000000000000000000000000000001"]
+    assert ok["status"] == "ok"
+    assert ok["funder"] == "0xffff000000000000000000000000000000000001"  # lowercased
+    assert ok["funder_is_contract"] == 0
+    assert ok["block_num"] == 123
+    none = rows["0xaaaa000000000000000000000000000000000002"]
+    assert none["status"] == "none"
+    assert none["funder"] is None
+    # A different chain is a different cache namespace.
+    assert q.get_reviewer_funding(db, 1, ["0xaaaa000000000000000000000000000000000001"]) == {}
+
+
+def test_reviewer_funding_upsert_overwrites(db) -> None:
+    addr = "0xaaaa000000000000000000000000000000000001"
+    q.put_reviewer_funding(db, BASE, addr, status="ok", funder="0xf1", funder_is_contract=None)
+    q.put_reviewer_funding(db, BASE, addr, status="ok", funder="0xf1", funder_is_contract=True)
+    row = q.get_reviewer_funding(db, BASE, [addr])[addr]
+    assert row["funder_is_contract"] == 1
+
+
+def test_reviewer_funding_rejects_unknown_status(db) -> None:
+    with pytest.raises(sqlite3.IntegrityError):
+        q.put_reviewer_funding(db, BASE, "0xaaa", status="error")
+
+
+def test_reviewer_funding_batch_get_chunks_past_500(db) -> None:
+    addresses = [f"0x{i:040x}" for i in range(501)]
+    for address in addresses:
+        q.put_reviewer_funding(db, BASE, address, status="none")
+    assert len(q.get_reviewer_funding(db, BASE, addresses)) == 501
+
+
+def test_funder_code_status_reused_across_reviewers(db) -> None:
+    funder = "0xffff000000000000000000000000000000000001"
+    assert q.funder_code_status(db, BASE, funder) is None
+    q.put_reviewer_funding(db, BASE, "0xaaa1", status="ok", funder=funder, funder_is_contract=False)
+    assert q.funder_code_status(db, BASE, funder.upper()) is False
+    # A row that predates the EOA check does not mask a decided one.
+    q.put_reviewer_funding(db, BASE, "0xaaa2", status="ok", funder="0xf2")
+    assert q.funder_code_status(db, BASE, "0xf2") is None
+
+
+def test_funder_agent_spread_counts_distinct_agents(db) -> None:
+    hub, farm = "0xhub", "0xfarm"
+    # hub funded reviewers who reviewed 3 distinct agents; farm's reviewers
+    # all reviewed the same single agent.
+    for i, agent in enumerate(["8453:1", "8453:2", "8453:3"]):
+        q.put_reviewer_funding(db, BASE, f"0xh{i}", status="ok", funder=hub)
+        q.record_reviewer_agents(db, BASE, [f"0xh{i}"], agent)
+    for i in range(3):
+        q.put_reviewer_funding(db, BASE, f"0xf{i}", status="ok", funder=farm)
+        q.record_reviewer_agents(db, BASE, [f"0xf{i}"], "8453:9")
+    spread = q.funder_agent_spread(db, BASE, [hub, farm, "0xunseen"])
+    assert spread == {hub: 3, farm: 1}
+    # Repeat feedback on the same agent stays one association.
+    q.record_reviewer_agents(db, BASE, ["0xf0"], "8453:9")
+    assert q.funder_agent_spread(db, BASE, [farm]) == {farm: 1}
 
 
 # --- transaction helper --------------------------------------------------------
