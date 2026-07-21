@@ -41,6 +41,33 @@ class ReputationSummary:
     distinct_reviewers: int
     average_score: float | None  # mean of non-revoked values, or None if none
     top_tags: list[str] = field(default_factory=list)
+    # lowercased reviewer address -> that reviewer's scores (M6 input; a key
+    # with an empty list is a reviewer whose feedback carried no parseable
+    # value). len(reviewer_scores) == distinct_reviewers.
+    reviewer_scores: dict[str, list[float]] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class SybilResult:
+    """One Sybil-filter pass over a bound agent's reviewer set (M6).
+
+    `status` is the honest signal, mirroring Binding.status:
+      "complete"  — every reviewer (and its explored funder ancestry) has a
+                    permanent funding fact; the filtered fields are populated.
+      "complete_truncated" — same full coverage, but of a page-capped feedback
+                    window (agents with more feedback than one subgraph page):
+                    the numbers describe the newest-window reviewers only.
+      "pending"   — the funding cache is still warming (per-pass lookup budget
+                    or RPC failures); filtered fields stay None rather than
+                    report a number computed from partial coverage.
+    """
+
+    status: str  # complete | complete_truncated | pending
+    reviewers: int  # size of the reviewer set considered
+    resolved: int  # permanent funding facts held (reviewers + explored ancestry)
+    filtered_count: int | None = None  # independent clusters (one vote each)
+    filtered_score: float | None = None  # mean of per-cluster mean scores
+    excluded_hub_funders: int = 0  # funders refused as cluster edges (labels/fan-out)
 
 
 @dataclass(slots=True)
@@ -65,6 +92,9 @@ class Binding:
     method: str | None = None
     confidence: str | None = None  # low | medium | high
     reputation: ReputationSummary | None = None
+    # M6: filled by the service after binding when the Sybil filter ran
+    # (bound + has feedback + alchemy key set); None means not attempted.
+    sybil: SybilResult | None = None
     # >1 agent claimed the same wallet: ambiguous, all candidates listed.
     ambiguous_agent_ids: list[str] = field(default_factory=list)
 

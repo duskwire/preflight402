@@ -72,8 +72,11 @@ class SubgraphClient:
             # break the free preflight. httpx.InvalidURL (malformed key) is not
             # an HTTPError, and json()/decoding can surface odd types — swallow
             # everything, degrade to an unpopulated block. CancelledError is a
-            # BaseException and still propagates.
-            logger.warning("subgraph query failed (chain %s): %s", chain_id, exc)
+            # BaseException and still propagates. httpx exception strings embed
+            # the request URL — and the API key is IN the gateway URL, so it
+            # must never reach the logs verbatim.
+            redacted = str(exc).replace(self._api_key, "<key>")
+            logger.warning("subgraph query failed (chain %s): %s", chain_id, redacted)
             return None
         if not isinstance(payload, dict) or payload.get("errors"):
             logger.warning("subgraph returned errors (chain %s): %s", chain_id, payload)
@@ -81,9 +84,7 @@ class SubgraphClient:
         data = payload.get("data")
         return data if isinstance(data, dict) else None
 
-    async def agents_by_wallet(
-        self, chain_id: int, wallet: str
-    ) -> list[AgentIdentity] | None:
+    async def agents_by_wallet(self, chain_id: int, wallet: str) -> list[AgentIdentity] | None:
         """Agents whose on-chain agentWallet equals `wallet` (lowercased).
 
         Returns None when the query FAILED (network/GraphQL/rate-limit error) —
@@ -146,22 +147,28 @@ def _summarize_feedback(rows: list[dict]) -> ReputationSummary:
     # observed live). On-chain the score is fixed-point (value:int128 /
     # 10^valueDecimals) — if this ever reads raw RPC instead of the subgraph, it
     # MUST divide by valueDecimals per entry (Research4-M6-sybil.md §2).
-    reviewers: set[str] = set()
+    reviewer_scores: dict[str, list[float]] = {}
     scores: list[float] = []
     tag_counts: dict[str, int] = {}
     for row in rows:
-        client = row.get("clientAddress")
-        if isinstance(client, str):
-            reviewers.add(client.lower())
+        value: float | None = None
         with contextlib.suppress(TypeError, ValueError, KeyError):
-            scores.append(float(row["value"]))
+            value = float(row["value"])
+        if value is not None:
+            scores.append(value)
+        client = row.get("clientAddress")
+        if isinstance(client, str) and client:
+            per_reviewer = reviewer_scores.setdefault(client.lower(), [])
+            if value is not None:
+                per_reviewer.append(value)
         for tag in (row.get("tag1"), row.get("tag2")):
             if isinstance(tag, str) and tag:
                 tag_counts[tag] = tag_counts.get(tag, 0) + 1
     top_tags = [tag for tag, _ in sorted(tag_counts.items(), key=lambda kv: -kv[1])[:5]]
     return ReputationSummary(
         raw_feedback_count=len(rows),
-        distinct_reviewers=len(reviewers),
+        distinct_reviewers=len(reviewer_scores),
         average_score=round(sum(scores) / len(scores), 1) if scores else None,
         top_tags=top_tags,
+        reviewer_scores=reviewer_scores,
     )
