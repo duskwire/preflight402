@@ -14,6 +14,11 @@ WorkingDirectory=/var/lib/preflight402
 ExecStart=/opt/preflight402/venv/bin/uvicorn preflight402.api.app:app --host 0.0.0.0 --port 8402
 Restart=on-failure
 RestartSec=3
+# A scheduler cycle can run for minutes and graceful shutdown currently waits
+# for it, which blew past the default 90s stop window when unattended-upgrades
+# restarted services (2026-07-21) and got the unit SIGKILLed anyway. SIGKILL
+# mid-cycle is safe (SQLite WAL, per-probe commits), so stop fast on purpose.
+TimeoutStopSec=15
 
 # Hardening: the process only needs its venv (read) and its data dir (write).
 NoNewPrivileges=true
