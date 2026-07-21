@@ -92,6 +92,17 @@ async def test_client_summarizes_feedback() -> None:
 
 
 @respx.mock
+async def test_client_redacts_api_key_from_failure_logs(caplog) -> None:
+    # httpx exception strings embed the gateway URL, which embeds the key.
+    respx.post(GW).mock(return_value=httpx.Response(429))
+    with caplog.at_level("WARNING"):
+        await SubgraphClient(KEY).agents_by_wallet(BASE, WALLET)
+    assert caplog.records, "expected a warning to be logged"
+    assert KEY not in caplog.text
+    assert "<key>" in caplog.text
+
+
+@respx.mock
 async def test_client_returns_none_on_http_error() -> None:
     # None = "could not check" (NOT an empty match); never raises
     respx.post(GW).mock(return_value=httpx.Response(500))
@@ -296,7 +307,85 @@ def test_schema_block_populated_from_binding() -> None:
     assert block["raw_feedback_count"] == 39
     assert block["distinct_reviewers"] == 20
     assert block["raw_average_score"] == 81.2
-    assert block["sybil_filtered_count"] is None  # M6
+    # M6 did not run (no sybil attached): honest not_checked, null counts
+    assert block["sybil_status"] == "not_checked"
+    assert block["sybil_filtered_count"] is None
+
+
+def _bound_binding(sybil):
+    from preflight402.reputation.types import AgentIdentity, Binding, ReputationSummary
+
+    return Binding(
+        bound=True,
+        status="bound",
+        agent=AgentIdentity(
+            global_id="8453:1",
+            chain_id=8453,
+            agent_id="1",
+            owner=WALLET,
+            agent_wallet=WALLET,
+            total_feedback=3,
+        ),
+        method="agent_wallet",
+        confidence="medium",
+        reputation=ReputationSummary(
+            raw_feedback_count=3, distinct_reviewers=3, average_score=99.8
+        ),
+        sybil=sybil,
+    )
+
+
+def test_schema_block_sybil_complete_fills_filtered_fields() -> None:
+    from preflight402.reputation.types import SybilResult
+    from preflight402.verdict.schema import _erc8004_block
+
+    block = _erc8004_block(
+        _bound_binding(
+            SybilResult(
+                status="complete",
+                reviewers=3,
+                resolved=3,
+                filtered_count=1,
+                filtered_score=99.8,
+            )
+        )
+    )
+    assert block["sybil_status"] == "complete"
+    assert block["sybil_filtered_count"] == 1
+    assert block["filtered_score"] == 99.8
+
+
+def test_schema_block_sybil_complete_truncated_fills_but_labels_honestly() -> None:
+    # An agent with more feedback than one subgraph page still gets numbers,
+    # but the status says they describe the newest-window reviewers only.
+    from preflight402.reputation.types import SybilResult
+    from preflight402.verdict.schema import _erc8004_block
+
+    block = _erc8004_block(
+        _bound_binding(
+            SybilResult(
+                status="complete_truncated",
+                reviewers=996,
+                resolved=1005,
+                filtered_count=12,
+                filtered_score=89.7,
+            )
+        )
+    )
+    assert block["sybil_status"] == "complete_truncated"
+    assert block["sybil_filtered_count"] == 12
+    assert block["filtered_score"] == 89.7
+
+
+def test_schema_block_sybil_pending_keeps_counts_null() -> None:
+    # partial coverage must never masquerade as a filtered number
+    from preflight402.reputation.types import SybilResult
+    from preflight402.verdict.schema import _erc8004_block
+
+    block = _erc8004_block(_bound_binding(SybilResult(status="pending", reviewers=3, resolved=1)))
+    assert block["sybil_status"] == "pending"
+    assert block["sybil_filtered_count"] is None
+    assert block["filtered_score"] is None
 
 
 # --- full pipeline through the service ---------------------------------------
@@ -415,3 +504,129 @@ async def test_preflight_reputation_error_is_not_a_false_unbound(tmp_path, monke
     erc = result.document["reputation"]["erc8004"]
     assert erc["bound"] is None  # unknown, NOT a false "no agent"
     assert erc["binding_status"] == "error"
+
+
+# --- M6: sybil wiring through the service -------------------------------------
+
+ALCHEMY_KEY = "test-alchemy-key"
+ALCHEMY_URL = f"https://base-mainnet.g.alchemy.com/v2/{ALCHEMY_KEY}"
+FUNDER = "0x" + "f1".rjust(40, "0")
+
+
+def _x402_headers() -> dict[str, str]:
+    import base64
+    import json
+
+    payload = {
+        "x402Version": 2,
+        "resource": {"url": "https://clawnews.io/api/x402"},
+        "accepts": [
+            {
+                "scheme": "exact",
+                "network": "eip155:8453",
+                "amount": "10000",
+                "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+                "payTo": WALLET,
+                "maxTimeoutSeconds": 300,
+            }
+        ],
+    }
+    return {"payment-required": base64.b64encode(json.dumps(payload).encode()).decode()}
+
+
+def _stub_probe_factory(headers):
+    from preflight402.probe.prober import ProbeResult
+    from preflight402.probe.tls import TLSInfo
+
+    async def stub_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+        return ProbeResult(
+            url=url,
+            ok=True,
+            http_status=402,
+            headers=headers,
+            body="{}",
+            latency_ms=100.0,
+            tls=TLSInfo(valid=True, expires_at="2027-01-01T00:00:00.000Z", issuer="LE"),
+        )
+
+    return stub_probe
+
+
+def _alchemy_mock() -> None:
+    import json as jsonlib
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = jsonlib.loads(request.content)
+        if payload["method"] == "alchemy_getAssetTransfers":
+            transfers = [{"from": FUNDER, "hash": "0x1", "blockNum": "0x10"}]
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": 1, "result": {"transfers": transfers}}
+            )
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": "0x"})
+
+    respx.post(ALCHEMY_URL).mock(side_effect=handler)
+
+
+@respx.mock
+async def test_preflight_sybil_complete_end_to_end(tmp_path, monkeypatch) -> None:
+    # Two reviewers, both first-funded by the same EOA -> one cluster.
+    from preflight402 import service
+
+    monkeypatch.setattr(service, "probe", _stub_probe_factory(_x402_headers()))
+    graphql_mock(
+        [agent_row()],
+        feedbacks=[
+            {"value": "100", "clientAddress": "0x" + "a1".rjust(40, "0")},
+            {"value": "90", "clientAddress": "0x" + "a2".rjust(40, "0")},
+        ],
+    )
+    _alchemy_mock()
+
+    st = settings(
+        db_path=tmp_path / "sybil.db", allow_private_targets=True, alchemy_api_key=ALCHEMY_KEY
+    )
+    service.ensure_migrated.cache_clear()
+    result = await service.get_preflight("https://clawnews.io/api/x402", st)
+    erc = result.document["reputation"]["erc8004"]
+    assert erc["bound"] is True
+    assert erc["raw_feedback_count"] == 2
+    assert erc["distinct_reviewers"] == 2
+    assert erc["sybil_status"] == "complete"
+    assert erc["sybil_filtered_count"] == 1  # shared funder collapses them
+    assert erc["filtered_score"] == 95.0
+
+
+@respx.mock
+async def test_preflight_sybil_not_checked_without_alchemy_key(tmp_path, monkeypatch) -> None:
+    from preflight402 import service
+
+    monkeypatch.setattr(service, "probe", _stub_probe_factory(_x402_headers()))
+    graphql_mock([agent_row()], feedbacks=[{"value": "80", "clientAddress": "0xAAA"}])
+
+    st = settings(db_path=tmp_path / "nokey.db", allow_private_targets=True)
+    service.ensure_migrated.cache_clear()
+    result = await service.get_preflight("https://clawnews.io/api/x402", st)
+    erc = result.document["reputation"]["erc8004"]
+    assert erc["bound"] is True
+    assert erc["sybil_status"] == "not_checked"
+    assert erc["sybil_filtered_count"] is None
+
+
+@respx.mock
+async def test_preflight_sybil_pending_when_rpc_down(tmp_path, monkeypatch) -> None:
+    # Alchemy unreachable: the preflight still serves, sybil reports pending.
+    from preflight402 import service
+
+    monkeypatch.setattr(service, "probe", _stub_probe_factory(_x402_headers()))
+    graphql_mock([agent_row()], feedbacks=[{"value": "80", "clientAddress": "0xAAA"}])
+    respx.post(ALCHEMY_URL).mock(side_effect=httpx.ConnectError("down"))
+
+    st = settings(
+        db_path=tmp_path / "down.db", allow_private_targets=True, alchemy_api_key=ALCHEMY_KEY
+    )
+    service.ensure_migrated.cache_clear()
+    result = await service.get_preflight("https://clawnews.io/api/x402", st)
+    erc = result.document["reputation"]["erc8004"]
+    assert erc["bound"] is True
+    assert erc["sybil_status"] == "pending"
+    assert erc["sybil_filtered_count"] is None

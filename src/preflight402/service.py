@@ -20,6 +20,8 @@ from preflight402.probe.guard import resolve_and_validate
 from preflight402.probe.parsers import detect
 from preflight402.probe.prober import probe
 from preflight402.reputation import resolve_binding
+from preflight402.reputation.subgraph import FEEDBACK_PAGE
+from preflight402.reputation.sybil import sybil_filter
 from preflight402.verdict.rules import evaluate, is_payment_shaped
 from preflight402.verdict.schema import build_trust_preview, payee_address
 
@@ -147,9 +149,30 @@ async def _run_preflight(
         # verdict is unaffected either way. Runs only on cache-miss (this
         # path), so the extra subgraph call is not on the hot cached path.
         binding = await resolve_binding(payee_address(detection), canonical, settings)
-        document = build_trust_preview(
-            canonical, result, detection, verdict, binding=binding
-        )
+        # M6: Sybil-filter the bound agent's reviewers. Feature-gated on
+        # alchemy_api_key and never-raises; `binding` here is always a fresh
+        # instance when bound (never the UNBOUND/BINDING_ERROR singletons),
+        # so attaching the result is safe.
+        if (
+            binding is not None
+            and binding.status == "bound"
+            and binding.agent is not None
+            and binding.reputation is not None
+            and binding.reputation.reviewer_scores
+        ):
+            # A full subgraph page means the feedback window is (very likely)
+            # truncated — the filter must report complete_truncated, not
+            # claim full coverage of feedback it never saw.
+            truncated = binding.reputation.raw_feedback_count >= FEEDBACK_PAGE
+            binding.sybil = await sybil_filter(
+                conn,
+                binding.agent.chain_id,
+                binding.agent.global_id,
+                binding.reputation.reviewer_scores,
+                settings,
+                feedback_truncated=truncated,
+            )
+        document = build_trust_preview(canonical, result, detection, verdict, binding=binding)
         # No scheduler owns cache housekeeping yet, so reclaim expired rows
         # here — otherwise a flood of unique junk URLs grows verdict_cache
         # without bound (the index makes this touch only expired rows).

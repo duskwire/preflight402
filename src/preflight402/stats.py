@@ -167,6 +167,10 @@ def _usage(conn: sqlite3.Connection, cutoff_7d: str) -> dict[str, Any]:
         "preflight_calls_7d": sum(calls.values()),
         "preflight_cache_hits_7d": sum(hits.values()),
         "preflight_calls_by_day": calls,
+        # M6: how much the Sybil filter is actually running (RPC lookups are
+        # the Alchemy budget; complete passes are filtered verdicts served).
+        "sybil_lookups_7d": sum(by_day.get("sybil_lookups", {}).values()),
+        "sybil_passes_complete_7d": sum(by_day.get("sybil_passes_complete", {}).values()),
     }
 
 

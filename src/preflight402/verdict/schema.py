@@ -150,7 +150,13 @@ def _erc8004_block(binding: Binding | None) -> dict[str, Any]:
       status error  -> could not determine (subgraph failed): bound=null
       status unbound-> checked, no agent: bound=false
       status bound  -> bound=true, populated
-    Stable shape M6 extends with sybil_filtered_count/filtered_score."""
+    M6 mirrors the convention with `sybil_status`:
+      not_checked -> the filter did not run (feature off / unbound / no feedback)
+      pending     -> the funding cache is still warming: counts stay null
+                     rather than report a number from partial coverage
+      complete    -> sybil_filtered_count/filtered_score are populated
+      complete_truncated -> populated, but computed over a page-capped feedback
+                     window (agents with more feedback than one subgraph page)"""
     status = "not_checked" if binding is None else binding.status
     # bound is only a definite boolean when we actually determined it; a failed
     # lookup leaves it null (unknown), never a misleading False.
@@ -164,6 +170,7 @@ def _erc8004_block(binding: Binding | None) -> dict[str, Any]:
         "raw_feedback_count": None,
         "distinct_reviewers": None,
         "raw_average_score": None,
+        "sybil_status": "not_checked",  # M6
         "sybil_filtered_count": None,  # M6
         "filtered_score": None,  # M6
     }
@@ -180,4 +187,10 @@ def _erc8004_block(binding: Binding | None) -> dict[str, Any]:
             "raw_average_score": reputation.average_score if reputation else None,
         }
     )
+    sybil = binding.sybil
+    if sybil is not None:
+        block["sybil_status"] = sybil.status
+        if sybil.status.startswith("complete"):
+            block["sybil_filtered_count"] = sybil.filtered_count
+            block["filtered_score"] = sybil.filtered_score
     return block
