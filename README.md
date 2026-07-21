@@ -1,19 +1,25 @@
 # preflight402
 
 *One free call before your agent pays. Health, authenticity, and Sybil-filtered
-reputation — one verdict, any chain.*
+reputation — one verdict.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)
-![MCP](https://img.shields.io/badge/MCP-preflight-8A2BE2.svg)
+![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
+![MCP](https://img.shields.io/badge/MCP-io.ironshell%2Fpreflight402-8A2BE2.svg)
 
-An endpoint health-checker and trust-preview server for the agent payment
-economy (x402 on Base + Solana). Free preflight with no wallet required; paid
-depth (historical uptime, reseller detection, Sybil-filtered ERC-8004
-reputation) via x402 micropayments.
+A free trust/health preflight for the agent payment economy (x402). It probes
+an endpoint before your agent pays and returns one `trust-preview.v1` verdict:
+liveness, TLS, the 402 handshake (x402 v1/v2 + MPP detection), price sanity,
+continuous uptime history, ERC-8004 identity binding, and **Sybil-filtered**
+on-chain reputation — rolled into a **proceed / caution / avoid** recommendation
+with plain-language reasons. No wallet, no key, no charge.
 
-> Working name — final branding at M2.4. The verdict schema name is fixed:
-> **`trust-preview.v1`**.
+**Why filtered reputation matters:** one live agent shows a **99.8/100 average
+from 996 reviewers — until Sybil filtering collapses those reviewers into 12
+independent funding clusters at 89.7.** Raw reputation is trivially farmed;
+this is what the verdict actually scores. (Separately, only ~4% of x402 payees
+bind to any ERC-8004 identity at all — so most verdicts run on health, price,
+and handshake, and say so honestly.)
 
 ## 30-second quickstart
 
@@ -29,16 +35,40 @@ Or check an endpoint over plain HTTP:
 curl 'https://preflight402.ironshell.io/preflight?url=https://api.example.com/paid'
 ```
 
-You get back a `trust-preview.v1` verdict — liveness, TLS, the 402 handshake
-with protocol detection (x402 v1/v2, MPP), a USD price estimate, and a
-**proceed / caution / avoid** recommendation with reasons.
+## Guard every payment automatically
+
+[`preflight402-guard`](guard/) turns the service into a payment gate for the
+[x402 Python SDK](https://github.com/x402-foundation/x402) — safety becomes
+default-on instead of something an agent has to remember to call:
+
+```sh
+pip install "preflight402-guard[x402]"
+```
+
+```python
+from preflight402_guard import Guard
+from x402 import x402Client
+
+guard = Guard()          # block "avoid", warn on "caution"
+client = x402Client()
+guard.install(client)    # every payment is preflighted before signing;
+                         # a bad verdict raises PaymentAbortedError
+```
+
+It also cross-checks that the payee your client selected matches the endpoint
+that was preflighted (the 402's resource URL is attacker-controlled), enforces
+an optional `max_price_usd` ceiling against the *actual* selected terms, and
+fails **open** by default so your commerce never depends on our uptime. There's
+a CLI too: `preflight402-guard check <url>`. See [guard/README.md](guard/README.md).
 
 ## Status
 
-Live at [preflight402.ironshell.io](https://preflight402.ironshell.io). The
-free preflight engine is complete (M1): probe → 402 parse (x402 v1/v2 + MPP
-detection) → verdict → `trust-preview.v1`, over REST and MCP. Paid depth
-(history, reseller detection, ERC-8004 reputation) is next.
+Live at [preflight402.ironshell.io](https://preflight402.ironshell.io) and in
+the [official MCP registry](https://registry.modelcontextprotocol.io) as
+`io.ironshell/preflight402`. The free preflight engine (health + 402 parse +
+verdict), continuous probing with uptime history, ERC-8004 binding, and the
+Sybil filter are all shipped and serving live. The whole service is **free** —
+there is no paywall.
 
 ## Use it
 
@@ -52,12 +82,10 @@ Easiest — point any MCP client at the hosted instance, no install:
 https://preflight402.ironshell.io/mcp   (streamable-http)
 ```
 
-Or run it yourself. Until the package is published to PyPI (M2.3), run it
-from a local checkout.
-Claude Code — one line (point `--directory` at your clone):
+Or run it yourself over stdio. Claude Code — one line:
 
 ```sh
-claude mcp add preflight402 -- uv run --directory /path/to/preflight402 preflight402-mcp
+claude mcp add preflight402 -- uvx --from preflight402 preflight402-mcp
 ```
 
 Claude Desktop — add to `claude_desktop_config.json`:
@@ -66,15 +94,14 @@ Claude Desktop — add to `claude_desktop_config.json`:
 {
   "mcpServers": {
     "preflight402": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/preflight402", "preflight402-mcp"]
+      "command": "uvx",
+      "args": ["--from", "preflight402", "preflight402-mcp"]
     }
   }
 }
 ```
 
-Once published, that becomes `uvx --from preflight402 preflight402-mcp` (no clone
-needed). Either way, run it as a hosted HTTP server with
+Either way, run it as a hosted HTTP server with
 `preflight402-mcp --transport streamable-http` (serves the same tool at
 `http://<host>:8000/mcp`).
 
@@ -111,7 +138,7 @@ uv run ruff format --check .                   # formatting
 
 ```
 src/preflight402/
-├── api/          # REST + MCP server + x402 paywall
+├── api/          # REST + MCP server
 ├── probe/        # async prober, TLS inspection, 402 parsers (x402 v1/v2, MPP)
 ├── verdict/      # rules -> trust-preview.v1 JSON
 ├── chains/       # ChainVerifier interface: EVM (Base), SVM (Solana)
@@ -119,6 +146,7 @@ src/preflight402/
 ├── ingest/       # endpoint seed ingesters (Bazaar, x402scan, ...)
 ├── scheduler/    # probe loop with per-host politeness
 └── db/           # SQLite (WAL) schema + queries
+guard/            # preflight402-guard: client-side auto-preflight for the x402 SDK
 tests/            # unit/ + golden/ (captured 402 responses) + integration/ (marked slow)
 deploy/           # Dockerfile + deploy notes
 docs/             # trust-preview.v1 schema + API docs (M8)
