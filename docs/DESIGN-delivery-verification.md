@@ -1,8 +1,38 @@
 # Design: Crowdsourced Delivery Verification (M8-delivery)
 
-_Spec, 2026-07-22. Status: proposed, not built. Decisions locked with the user:
-split-default telemetry (anonymous minimal ON by default, tx-anchored verified
-tier opt-in); spec first, then build in phases._
+_Spec, 2026-07-22; research-validated 2026-07-24 (see §0). Status: Phase A in
+build. Decisions locked with the user: split-default telemetry (anonymous
+minimal ON by default, tx-anchored verified tier opt-in); phased build._
+
+---
+
+## 0. Research validation (2026-07-24 landscape sweep)
+
+- **The gap is confirmed open.** No service performs paid test purchases or
+  delivery/quality scoring of x402 endpoints as of July 2026; the closest
+  (x402scan) is passive probing. Emerging alternatives are STRUCTURAL —
+  escrow+evaluator (ERC-8183 "Job" primitive, Feb 2026; Virtuals ACP; x402r
+  refund/escrow extension, beta) — not evidence from real purchases. The
+  x402 V2 spec still ships no escrow/refund/dispute mechanism.
+- **Academic validation + attack catalog:** arXiv 2605.11781 ("Five Attacks
+  on x402", May 2026) demonstrates paid-but-denied attacks, **248 HTTP grants
+  replayed from a single on-chain payment**, and 60.2% discovery-Sybil gaming
+  from 5 registrations — "customers bear losses without recourse". Design
+  consequences: the per-(endpoint, tx) UNIQUE replay guard is load-bearing;
+  verification must bind tx → payee → endpoint, not just tx-exists.
+- **Competitive landscape:** paid probe competitors exist (x402.fuchss.app,
+  ~60k endpoints, per-call pricing) and a client-side policy guard competitor
+  exists (PolicyLayer, Jan 2026, npm `@policylayer/sdk` — spend caps/allowlists,
+  no trust verdict); the seller badge (our Phase D) already shipped
+  (x402station $1/30-day, May 2026). **None of them observe DELIVERY.** Our
+  moat is the only-one-with-post-hoc-delivery-evidence position — observational,
+  needs no seller cooperation, works on today's fire-and-forget x402 (unlike
+  the escrow/evaluator approaches that need both sides to adopt a new protocol
+  and lock funds). We can't give recourse; we give forewarning.
+- **B2A shift confirmed:** Apify exposes 20k Actors at $1 min but its quality
+  score is NOT in the 402 challenge ("agents pay blind on quality"); Cloudflare
+  (1B+ 402/day) + AWS WAF wire x402 at the edge, both purely seller-side, no
+  buyer trust signal. Item-level, buyer-facing delivery evidence is unclaimed.
 
 ---
 
