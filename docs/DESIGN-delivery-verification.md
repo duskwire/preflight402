@@ -1,8 +1,12 @@
 # Design: Crowdsourced Delivery Verification (M8-delivery)
 
-_Spec, 2026-07-22; research-validated 2026-07-24 (see §0). Status: Phase A in
-build. Decisions locked with the user: split-default telemetry (anonymous
-minimal ON by default, tx-anchored verified tier opt-in); phased build._
+_Spec, 2026-07-22; research-validated 2026-07-24 (see §0). **Status: Phase A
+SHIPPED + LIVE 2026-07-25** (commit c98571a) — guard reporting + POST
+/delivery-reports dark launch, storage only, adversarially reviewed (10 fixes),
+deployed to the LXC (db v4). Phases B (on-chain verify + payer clustering),
+C (verdict gates), D (seller badge) remain. Decisions locked with the user:
+split-default telemetry (anonymous minimal ON by default, tx-anchored verified
+tier opt-in); phased build._
 
 ---
 
