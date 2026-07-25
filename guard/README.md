@@ -50,7 +50,42 @@ print(decision.action, decision.recommendation, decision.reasons)
 preflight402-guard check https://api.example.com/data
 preflight402-guard check URL --block-caution --max-price-usd 0.05 --json
 # exit codes: 0 allowed, 1 allowed-with-warnings, 2 blocked, 3 no verdict
+
+# contribute a delivery outcome (helps everyone; see Delivery reporting below):
+preflight402-guard report URL --delivered
+preflight402-guard report URL --failed --tx 0xSETTLEMENTHASH
 ```
+
+## Delivery reporting — please read
+
+x402 is pay-first: no escrow, no refunds. The one thing no scanner can tell you
+before you pay is **whether an endpoint actually delivers what it charges for.**
+The guard learns that the only honest way — from real payments — and shares it
+so the next agent's verdict is better. This is opt-out, and here is exactly what
+happens:
+
+- **Anonymous (ON by default):** after a payment settles, the guard reports the
+  **endpoint URL**, whether the request **succeeded**, and a coarse failure
+  category. **No wallet, no tx hash, no payer, no client identity, and never
+  any response bodies or headers.** This data can never move a verdict on its
+  own — it only flags endpoints that take money and fail.
+- **Verified (OFF — opt in with `report_settlements=True`):** additionally
+  sends the settlement **tx hash, payer, network, amount**. The tx is already
+  public on-chain; the only new information is the tx↔endpoint link. This tier
+  is what lets a *positive* delivery claim be verified on-chain and Sybil
+  farms of payers collapse to one vote.
+
+**Turn it all off:**
+
+```python
+Guard(report_outcomes=False)                 # in code
+# or, process-wide (wins over code):
+export PREFLIGHT402_GUARD_NO_TELEMETRY=1
+```
+
+Reporting is fire-and-forget: it never adds latency to, or can fail, your
+payment. (Delivery verdicts are being rolled out in phases — today the guard
+collects; the verified `delivery` block lands once there's real data.)
 
 ## Policy knobs
 
@@ -62,6 +97,8 @@ preflight402-guard check URL --block-caution --max-price-usd 0.05 --json
 | `require_bound_identity` | off | block payees with no ERC-8004 identity |
 | `min_filtered_score` | off | floor on Sybil-filtered reputation, when available |
 | `fail_open` | `True` | service unreachable → allow with warning (set `False` to block) |
+| `report_outcomes` | `True` | anonymous delivery reporting (see above; `False` disables) |
+| `report_settlements` | `False` | opt in to verified, tx-anchored delivery reports |
 | `cache_ttl_s` | 60 | per-URL decision cache for hot loops |
 
 **Fail-open by design:** your commerce must not depend on our uptime. Strict

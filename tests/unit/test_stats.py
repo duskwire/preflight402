@@ -228,13 +228,15 @@ def test_cli_renders_text_and_json(db, tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.setenv("PREFLIGHT402_DB_PATH", str(tmp_path / "stats.db"))
     get_settings.cache_clear()
     try:
-        assert stats.main([]) == 0
+        # Pin the clock to the fixtures' NOW so the 7d windows don't drift with
+        # the wall clock (seed_world timestamps are relative to NOW).
+        assert stats.main(["--now", NOW]) == 0
         text = capsys.readouterr().out
         assert "preflight402 dashboard" in text
         assert "4 endpoints" in text
         assert "dead now: 1" in text
 
-        assert stats.main(["--json"]) == 0
+        assert stats.main(["--json", "--now", NOW]) == 0
         import json
 
         document = json.loads(capsys.readouterr().out)

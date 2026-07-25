@@ -100,6 +100,7 @@ def upsert_endpoint(
     source: str | None = None,
     meta: dict[str, Any] | None = None,
     source_meta: dict[str, Any] | None = None,
+    enabled: bool = True,
     now: str | None = None,
 ) -> int:
     """Insert an endpoint or merge into the existing row; return its id.
@@ -107,6 +108,12 @@ def upsert_endpoint(
     On conflict the first-discoverer data wins: first_seen_at and existing
     sources are kept, `source` is appended to sources if new, and meta is
     replaced only when a non-None meta is supplied.
+
+    `enabled` sets the scheduler flag on INSERT only (an existing row's enabled
+    is never changed here). Delivery-report ingest passes enabled=False so an
+    endpoint learned from an untrusted report is recorded but NOT added to the
+    probe queue — a report must not turn the prober into a probe-cannon aimed
+    at an attacker-chosen URL.
 
     `source_meta` (requires `source`) instead merges under a per-source
     namespace — meta["bazaar"] = {...} — INSIDE this transaction, so two
@@ -130,9 +137,16 @@ def upsert_endpoint(
             meta[source] = source_meta
         if row is None:
             cursor = conn.execute(
-                "INSERT INTO endpoints (url, host, sources, first_seen_at, meta)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (url, host, _dump([source] if source else []), now or utcnow_iso(), _dump(meta)),
+                "INSERT INTO endpoints (url, host, sources, first_seen_at, meta, enabled)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    url,
+                    host,
+                    _dump([source] if source else []),
+                    now or utcnow_iso(),
+                    _dump(meta),
+                    int(enabled),
+                ),
             )
             return cursor.lastrowid
         sources = json.loads(row["sources"])
@@ -472,6 +486,47 @@ def record_reviewer_agents(
         " VALUES (?, ?, ?)",
         [(chain_id, address.lower(), agent_global_id) for address in addresses],
     )
+
+
+def record_delivery_report(
+    conn: sqlite3.Connection,
+    endpoint_id: int,
+    *,
+    delivered: bool,
+    tier: str,
+    outcome: str | None = None,
+    http_status: int | None = None,
+    latency_ms: float | None = None,
+    content_type: str | None = None,
+    tx_hash: str | None = None,
+    payer: str | None = None,
+    chain_id: int | None = None,
+    amount: str | None = None,
+    now: str | None = None,
+) -> bool:
+    """Store one crowdsourced delivery report (Phase A). Returns False when a
+    verified report for this (endpoint, tx) already exists — the replay guard,
+    swallowed via INSERT OR IGNORE so the ingest endpoint stays idempotent."""
+    cursor = conn.execute(
+        "INSERT OR IGNORE INTO delivery_reports (endpoint_id, reported_at, delivered, tier,"
+        " outcome, http_status, latency_ms, content_type, tx_hash, payer, chain_id, amount)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            endpoint_id,
+            now or utcnow_iso(),
+            int(delivered),
+            tier,
+            outcome,
+            http_status,
+            latency_ms,
+            content_type,
+            tx_hash.lower() if tx_hash else None,
+            payer.lower() if payer else None,
+            chain_id,
+            amount,
+        ),
+    )
+    return cursor.rowcount > 0
 
 
 def funder_agent_spread(

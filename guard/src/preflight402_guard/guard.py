@@ -37,8 +37,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+
+from preflight402_guard.reporting import DeliveryReporter
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +143,8 @@ class Guard:
         verify_payee: bool = True,
         fail_open: bool = True,
         usd_assets: dict[tuple[str, str], int] | None = None,
+        report_outcomes: bool = True,
+        report_settlements: bool = False,
         timeout_s: float = 8.0,
         cache_ttl_s: float = 60.0,
         on_decision: Callable[[GuardDecision], None] | None = None,
@@ -157,6 +162,8 @@ class Guard:
             (n.lower(), a.lower()): d
             for (n, a), d in {**_KNOWN_USD_ASSETS, **(usd_assets or {})}.items()
         }
+        self._report_settlements = report_settlements
+        self._reporter = DeliveryReporter(self._service_url, enabled=report_outcomes)
         self._timeout_s = timeout_s
         self._cache_ttl_s = cache_ttl_s
         self._on_decision = on_decision
@@ -278,7 +285,11 @@ class Guard:
     def install(self, x402_client: Any) -> Any:
         """Register this guard on an x402Client/x402ClientSync; returns the
         client for chaining. Async clients get the async hook (a blocking
-        hook would stall the event loop); sync clients get the sync hook."""
+        hook would stall the event loop); sync clients get the sync hook.
+
+        Also registers an on_payment_response hook that reports the delivery
+        outcome (unless report_outcomes=False) — fire-and-forget, never
+        touching the payment path."""
         register = getattr(x402_client, "on_before_payment_creation", None)
         if register is None:
             raise TypeError(
@@ -291,7 +302,106 @@ class Guard:
         # would only fail at first payment.
         is_async = asyncio.iscoroutinefunction(getattr(x402_client, "create_payment_payload", None))
         register(self.hook if is_async else self.hook_sync)
+        register_response = getattr(x402_client, "on_payment_response", None)
+        if self._reporter.enabled and register_response is not None:
+            register_response(self.response_hook if is_async else self.response_hook_sync)
         return x402_client
+
+    # ------------------------------------------------- delivery reporting (M8)
+
+    async def response_hook(self, ctx: Any) -> None:
+        """x402 on_payment_response hook (async): observe the delivery outcome
+        and report it. Returns None — we only observe, never recover/abort."""
+        payload = self._build_report(ctx)
+        if payload is not None:
+            self._reporter.report_async(payload)
+        return None
+
+    def response_hook_sync(self, ctx: Any) -> None:
+        payload = self._build_report(ctx)
+        if payload is not None:
+            self._reporter.report_thread(payload)
+        return None
+
+    def report(
+        self,
+        url: str,
+        *,
+        delivered: bool,
+        tx_hash: str | None = None,
+        payer: str | None = None,
+        network: str | None = None,
+        amount: str | None = None,
+        http_status: int | None = None,
+        latency_ms: float | None = None,
+        content_type: str | None = None,
+        outcome: str | None = None,
+        blocking: bool = False,
+    ) -> bool | None:
+        """Manually contribute a delivery report (CLI / custom transports).
+
+        Include tx_hash to make it a verified-tier report. blocking=True waits
+        for the send and returns whether it succeeded (used by the CLI, where a
+        daemon thread dies at exit); the fire-and-forget path returns None."""
+        payload = _report_payload(
+            url=url,
+            delivered=delivered,
+            report_settlements=self._report_settlements or tx_hash is not None,
+            tx_hash=tx_hash,
+            payer=payer,
+            network=network,
+            amount=amount,
+            http_status=http_status,
+            latency_ms=latency_ms,
+            content_type=content_type,
+            outcome=outcome,
+        )
+        if payload is None:
+            return False if blocking else None
+        if blocking:
+            return self._reporter.send_blocking(payload)
+        self._reporter.report_thread(payload)
+        return None
+
+    @property
+    def reporting_enabled(self) -> bool:
+        """Whether delivery reporting is active (respects the env kill switch)."""
+        return self._reporter.enabled
+
+    def _build_report(self, ctx: Any) -> dict[str, Any] | None:
+        """Turn an on_payment_response context into a report payload. Never
+        raises — a telemetry glitch must not break the payment flow."""
+        try:
+            url = _resource_url(ctx)
+            if not url:
+                return None
+            settle = getattr(ctx, "settle_response", None)
+            error = getattr(ctx, "error", None)
+            settle_ok = bool(getattr(settle, "success", False)) if settle is not None else False
+            delivered = settle_ok and error is None
+            outcome = None
+            if not delivered:
+                outcome = "settlement_failed" if not settle_ok else "post_payment_error"
+                if error is not None:
+                    # class name only — never the error's message (may carry
+                    # response detail / user data).
+                    outcome = f"{outcome}:{type(error).__name__}"
+            tx = getattr(settle, "transaction", None) if settle is not None else None
+            return _report_payload(
+                url=url,
+                delivered=delivered,
+                report_settlements=self._report_settlements,
+                tx_hash=tx if isinstance(tx, str) else None,
+                payer=getattr(settle, "payer", None) if settle is not None else None,
+                network=str(getattr(settle, "network", "") or "") or None
+                if settle is not None
+                else None,
+                amount=getattr(settle, "amount", None) if settle is not None else None,
+                outcome=outcome,
+            )
+        except Exception as exc:  # never let telemetry touch the payment path
+            logger.debug("building delivery report failed: %s", exc)
+            return None
 
     def _abort_for(self, decision: GuardDecision) -> Any:
         if decision.allowed:
@@ -534,3 +644,73 @@ def _selected_pay_to(ctx: Any) -> str | None:
     """The recipient address of the requirements the client selected."""
     pay_to = getattr(getattr(ctx, "selected_requirements", None), "pay_to", None)
     return pay_to if isinstance(pay_to, str) and pay_to else None
+
+
+def _safe_report_url(url: str) -> str | None:
+    """Reduce a resource URL to scheme+host+path for reporting.
+
+    The endpoint URL is the only identifier a delivery report carries, but a
+    raw URL can embed secrets — a ?api_key=/?token= query string, or
+    user:pw@ basic-auth userinfo. Those must never leave the client, even on
+    the anonymous tier. Returns None if the URL has no usable host."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    if not parts.scheme or not parts.hostname:
+        return None
+    host = parts.hostname
+    if parts.port is not None:
+        host = f"{host}:{parts.port}"
+    if ":" in parts.hostname:  # re-bracket IPv6 literals
+        host = f"[{parts.hostname}]" + (f":{parts.port}" if parts.port is not None else "")
+    return urlunsplit((parts.scheme, host, parts.path or "/", "", ""))
+
+
+def _report_payload(
+    *,
+    url: str,
+    delivered: bool,
+    report_settlements: bool,
+    tx_hash: str | None = None,
+    payer: str | None = None,
+    network: str | None = None,
+    amount: str | None = None,
+    http_status: int | None = None,
+    latency_ms: float | None = None,
+    content_type: str | None = None,
+    outcome: str | None = None,
+) -> dict[str, Any] | None:
+    """Build a delivery-report payload with the tier's privacy boundary.
+
+    Verified tier (report_settlements AND a tx hash present) carries the
+    on-chain settlement fields; the anonymous tier NEVER includes tx/payer —
+    only the endpoint URL, the delivered bool, and coarse non-identifying
+    detail. Returns None when there's no URL to key on.
+    """
+    safe_url = _safe_report_url(url) if url else None
+    if not safe_url:
+        return None
+    verified = bool(report_settlements and tx_hash)
+    payload: dict[str, Any] = {
+        "url": safe_url,
+        "delivered": bool(delivered),
+        "tier": "verified" if verified else "anonymous",
+    }
+    if outcome:
+        payload["outcome"] = outcome[:64]
+    if isinstance(http_status, int):
+        payload["http_status"] = http_status
+    if isinstance(latency_ms, (int, float)):
+        payload["latency_ms"] = round(float(latency_ms), 1)
+    if isinstance(content_type, str) and content_type:
+        payload["content_type"] = content_type[:128]
+    if verified:
+        payload["tx_hash"] = tx_hash
+        if isinstance(payer, str) and payer:
+            payload["payer"] = payer
+        if isinstance(network, str) and network:
+            payload["network"] = network
+        if isinstance(amount, str) and amount:
+            payload["amount"] = amount
+    return payload

@@ -444,3 +444,37 @@ def test_second_probe_of_known_endpoint_gains_history_context(client, probe_stub
     second = client.get("/preflight", params={"url": "https://api.example.com/data"}).json()
     assert first["verdict"]["recommendation"] == "caution"
     assert any("new provider" in r for r in second["verdict"]["reasons"])
+
+
+def test_delivery_reports_endpoint_ingests(client) -> None:
+    resp = client.post(
+        "/delivery-reports",
+        json={
+            "reports": [
+                {"url": "https://api.example.com/paid", "delivered": True},
+                {
+                    "url": "https://api.example.com/paid",
+                    "delivered": False,
+                    "tx_hash": "0x" + "ab" * 32,
+                },
+                {"bad": "report"},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["accepted"] == 2 and body["skipped"] == 1
+
+
+def test_delivery_reports_handles_garbage_body(client) -> None:
+    assert client.post("/delivery-reports", json={"reports": "nope"}).json()["accepted"] == 0
+    assert client.post("/delivery-reports", json={}).json()["accepted"] == 0
+
+
+def test_delivery_reports_rejects_oversized_body(client) -> None:
+    huge = {"reports": [{"url": "https://a.test/x", "delivered": True, "pad": "z" * 300_000}]}
+    assert client.post("/delivery-reports", json=huge).status_code == 413
+
+
+def test_delivery_reports_rejects_invalid_json(client) -> None:
+    assert client.post("/delivery-reports", content=b"{not json").status_code == 400

@@ -65,7 +65,7 @@ def create_app() -> FastAPI:
         RateLimitMiddleware,
         get_limiter=lambda: rest._limiter,
         get_rate=lambda: rest.settings.rate_limit_per_minute,
-        prefixes=("/preflight", "/mcp", "/stats"),
+        prefixes=("/preflight", "/mcp", "/stats", "/delivery-reports"),
     )
     # Mount the MCP app at /mcp (not "/"), with its internal path at the mount
     # root, so it owns exactly the /mcp subtree. Mounting at "/" would

@@ -1,13 +1,15 @@
 import asyncio
+import json
 import time
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from preflight402 import __version__
 from preflight402.api.ratelimit import RateLimiter, RateLimitMiddleware
 from preflight402.config import get_settings
 from preflight402.db import connect, queries
+from preflight402.delivery import IngestResult, ingest_reports
 from preflight402.probe.guard import BlockedTargetError
 from preflight402.service import ensure_migrated, get_preflight
 from preflight402.stats import compute_stats
@@ -33,7 +35,7 @@ app.add_middleware(
     RateLimitMiddleware,
     get_limiter=lambda: _limiter,
     get_rate=lambda: settings.rate_limit_per_minute,
-    prefixes=("/preflight", "/stats"),
+    prefixes=("/preflight", "/stats", "/delivery-reports"),
 )
 
 # /stats aggregates over the whole probes table; one computation per
@@ -89,6 +91,40 @@ async def preflight(url: str) -> JSONResponse:
     except queries.InvalidURLError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return JSONResponse(result.document, headers={"x-preflight-cache": result.cache_state})
+
+
+DELIVERY_MAX_BODY_BYTES = 256 * 1024  # a full 50-report batch is a few KB
+
+
+@router.post("/delivery-reports")
+async def delivery_reports(request: Request) -> JSONResponse:
+    """Ingest crowdsourced delivery outcomes from preflight402-guard (M8
+    Phase A, dark launch). Stores raw reports; nothing moves a verdict yet.
+
+    The body is attacker-writable, so ingestion is hardened: the body is size-
+    capped BEFORE it is parsed (a 50-report batch is a few KB, so 256KB is
+    generous), each report is validated/clamped with per-report isolation,
+    literal-private targets are rejected, and the DB work runs off the event
+    loop — a report batch must never stall the free preflight path."""
+    body_bytes = await request.body()
+    if len(body_bytes) > DELIVERY_MAX_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="delivery report batch too large")
+    try:
+        body = json.loads(body_bytes) if body_bytes else {}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid JSON") from None
+    ensure_migrated(str(settings.db_path))
+    reports = body.get("reports") if isinstance(body, dict) else None
+    result = await asyncio.to_thread(_ingest_reports_in_thread, str(settings.db_path), reports)
+    return JSONResponse({"accepted": result.accepted, "skipped": result.skipped})
+
+
+def _ingest_reports_in_thread(db_path: str, reports) -> "IngestResult":
+    conn = connect(db_path)
+    try:
+        return ingest_reports(conn, reports, settings)
+    finally:
+        conn.close()
 
 
 app.include_router(router)

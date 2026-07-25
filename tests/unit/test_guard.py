@@ -496,3 +496,232 @@ async def test_install_dispatches_by_structure_for_sync_subclass() -> None:
     # "async hooks not supported" TypeError instead of a clean abort
     with pytest.raises(PaymentAbortedError):
         client.create_payment_payload(_payment_required())
+
+
+# --- Phase A: delivery reporting (crowdsourced delivery verification) ----------
+
+REPORTS = f"{SERVICE}/delivery-reports"
+
+
+def _response_ctx(*, success: bool, url: str = URL, tx: str = "0xdead", error=None, payer="0xpay"):
+    from x402.schemas import PaymentRequired, ResourceInfo, SettleResponse
+
+    settle = SettleResponse(
+        success=success, transaction=tx, network="eip155:8453", payer=payer, amount="10000"
+    )
+    pr = PaymentRequired(accepts=_payment_required().accepts, resource=ResourceInfo(url=url))
+    # fields: payment_payload, requirements, settle_response, payment_required, error
+    from x402.schemas import PaymentResponseContext
+
+    return PaymentResponseContext(
+        payment_payload=None,
+        requirements=pr.accepts[0],
+        settle_response=settle,
+        payment_required=pr,
+        error=error,
+    )
+
+
+@respx.mock
+async def test_response_hook_reports_successful_delivery() -> None:
+    route = respx.post(REPORTS).mock(return_value=httpx.Response(200, json={"accepted": 1}))
+    g = Guard(SERVICE)  # report_outcomes defaults ON
+    await g.response_hook(_response_ctx(success=True))
+    # the send is a detached task; let it run
+    import asyncio
+
+    await asyncio.sleep(0.05)
+    assert route.called
+    body = json.loads(route.calls.last.request.content)["reports"][0]
+    assert body == {"url": URL, "delivered": True, "tier": "anonymous"}
+
+
+@respx.mock
+async def test_response_hook_reports_paid_but_denied() -> None:
+    # settle succeeded but the HTTP request errored after payment — the
+    # "settlement preemption" attack signature the whole feature exists to catch.
+    route = respx.post(REPORTS).mock(return_value=httpx.Response(200))
+    g = Guard(SERVICE)
+    await g.response_hook(_response_ctx(success=True, error=httpx.ConnectError("boom")))
+    import asyncio
+
+    await asyncio.sleep(0.05)
+    body = json.loads(route.calls.last.request.content)["reports"][0]
+    assert body["delivered"] is False
+    assert body["outcome"] == "post_payment_error:ConnectError"
+    assert "payer" not in body and "tx_hash" not in body  # anonymous tier
+
+
+@respx.mock
+async def test_verified_tier_includes_settlement_only_when_opted_in() -> None:
+    route = respx.post(REPORTS).mock(return_value=httpx.Response(200))
+    g = Guard(SERVICE, report_settlements=True)
+    await g.response_hook(_response_ctx(success=True, tx="0xBEEF", payer="0xPAYER"))
+    import asyncio
+
+    await asyncio.sleep(0.05)
+    body = json.loads(route.calls.last.request.content)["reports"][0]
+    assert body["tier"] == "verified"
+    assert body["tx_hash"] == "0xBEEF"
+    assert body["payer"] == "0xPAYER"
+    assert body["network"] == "eip155:8453"
+
+
+@respx.mock
+async def test_reporting_off_sends_nothing() -> None:
+    route = respx.post(REPORTS).mock(return_value=httpx.Response(200))
+    g = Guard(SERVICE, report_outcomes=False)
+    await g.response_hook(_response_ctx(success=True))
+    import asyncio
+
+    await asyncio.sleep(0.05)
+    assert not route.called
+    assert g._reporter.enabled is False
+
+
+@respx.mock
+async def test_env_kill_switch_forces_reporting_off(monkeypatch) -> None:
+    monkeypatch.setenv("PREFLIGHT402_GUARD_NO_TELEMETRY", "1")
+    route = respx.post(REPORTS).mock(return_value=httpx.Response(200))
+    g = Guard(SERVICE, report_outcomes=True)  # code says on, env overrides
+    assert g._reporter.enabled is False
+    await g.response_hook(_response_ctx(success=True))
+    import asyncio
+
+    await asyncio.sleep(0.05)
+    assert not route.called
+
+
+@respx.mock
+async def test_response_hook_never_raises_on_reporter_failure() -> None:
+    respx.post(REPORTS).mock(side_effect=httpx.ConnectError("service down"))
+    g = Guard(SERVICE)
+    # must return None (never raise) even though the send fails
+    assert await g.response_hook(_response_ctx(success=True)) is None
+    import asyncio
+
+    await asyncio.sleep(0.05)
+
+
+async def test_build_report_skips_ctx_without_url() -> None:
+    from x402.schemas import PaymentRequired, PaymentResponseContext, SettleResponse
+
+    pr = PaymentRequired(accepts=_payment_required().accepts, resource=None)
+    ctx = PaymentResponseContext(
+        payment_payload=None,
+        requirements=pr.accepts[0],
+        settle_response=SettleResponse(success=True, transaction="0x1", network="eip155:8453"),
+        payment_required=pr,
+        error=None,
+    )
+    assert Guard(SERVICE)._build_report(ctx) is None
+
+
+@respx.mock
+async def test_install_registers_response_hook_when_reporting_on() -> None:
+    from x402 import x402Client
+
+    g = Guard(SERVICE)
+    client = g.install(x402Client())
+    assert client._payment_response_hooks  # on_payment_response registered
+    # and NOT registered when reporting is off
+    g_off = Guard(SERVICE, report_outcomes=False)
+    client_off = g_off.install(x402Client())
+    assert not client_off._payment_response_hooks
+
+
+@respx.mock
+def test_manual_report_blocking_send() -> None:
+    route = respx.post(REPORTS).mock(return_value=httpx.Response(200, json={"accepted": 1}))
+    Guard(SERVICE).report(URL, delivered=True, blocking=True)
+    assert route.called
+    body = json.loads(route.calls.last.request.content)["reports"][0]
+    assert body == {"url": URL, "delivered": True, "tier": "anonymous"}
+
+
+@respx.mock
+def test_cli_report_subcommand(monkeypatch, capsys) -> None:
+    from preflight402_guard import cli
+
+    route = respx.post(REPORTS).mock(return_value=httpx.Response(200))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["preflight402-guard", "report", URL, "--service", SERVICE, "--failed", "--tx", "0xabc"],
+    )
+    cli.main()
+    assert route.called
+    body = json.loads(route.calls.last.request.content)["reports"][0]
+    assert body["delivered"] is False and body["tier"] == "verified" and body["tx_hash"] == "0xabc"
+    assert "verified" in capsys.readouterr().out
+
+
+# --- Phase A review fixes: URL secret stripping, dispatch safety, CLI honesty --
+
+
+def test_report_url_strips_query_and_userinfo() -> None:
+    from preflight402_guard.guard import _safe_report_url
+
+    assert _safe_report_url("https://api.x.com/data?api_key=SECRET") == "https://api.x.com/data"
+    assert _safe_report_url("https://user:pw@api.x.com/data") == "https://api.x.com/data"
+    assert _safe_report_url("https://api.x.com:8443/p?t=1#frag") == "https://api.x.com:8443/p"
+    assert _safe_report_url("https://[2001:db8::1]/p?x=1") == "https://[2001:db8::1]/p"
+    assert _safe_report_url("not a url") is None
+
+
+@respx.mock
+async def test_anonymous_report_never_leaks_url_secrets_end_to_end() -> None:
+    route = respx.post(REPORTS).mock(return_value=httpx.Response(200))
+    g = Guard(SERVICE)
+    ctx = _response_ctx(success=True, url="https://api.example.com/data?api_key=SECRET123")
+    await g.response_hook(ctx)
+    import asyncio
+
+    await asyncio.sleep(0.05)
+    body = json.loads(route.calls.last.request.content)["reports"][0]
+    assert body["url"] == "https://api.example.com/data"
+    assert "SECRET123" not in json.dumps(body)
+
+
+@respx.mock
+async def test_response_hook_never_raises_when_dispatch_fails(monkeypatch) -> None:
+    # Thread.start() blowing up (thread exhaustion) must not surface in the
+    # payment path — the review's paid-but-crashed scenario.
+    import preflight402_guard.reporting as reporting
+
+    def boom(*a, **k):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(reporting.threading, "Thread", boom)
+    g = Guard(SERVICE)
+    assert g.response_hook_sync(_response_ctx(success=True)) is None  # swallowed
+
+
+def test_report_returns_send_result_for_blocking(monkeypatch) -> None:
+    import preflight402_guard.reporting as reporting
+
+    monkeypatch.setattr(reporting.DeliveryReporter, "send_blocking", lambda self, p: False)
+    assert Guard(SERVICE).report(URL, delivered=True, blocking=True) is False
+    monkeypatch.setattr(reporting.DeliveryReporter, "send_blocking", lambda self, p: True)
+    assert Guard(SERVICE).report(URL, delivered=True, blocking=True) is True
+
+
+@respx.mock
+def test_cli_report_exit_4_when_send_fails(monkeypatch, capsys) -> None:
+    from preflight402_guard import cli
+
+    respx.post(REPORTS).mock(return_value=httpx.Response(503))
+    monkeypatch.setattr("sys.argv", ["p", "report", URL, "--service", SERVICE, "--delivered"])
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+    assert excinfo.value.code == 4
+    assert "NOT recorded" in capsys.readouterr().err
+
+
+def test_cli_report_refuses_when_telemetry_disabled(monkeypatch) -> None:
+    from preflight402_guard import cli
+
+    monkeypatch.setenv("PREFLIGHT402_GUARD_NO_TELEMETRY", "1")
+    monkeypatch.setattr("sys.argv", ["p", "report", URL, "--service", SERVICE, "--delivered"])
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+    assert excinfo.value.code != 0

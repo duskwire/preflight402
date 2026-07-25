@@ -171,6 +171,8 @@ def _usage(conn: sqlite3.Connection, cutoff_7d: str) -> dict[str, Any]:
         # the Alchemy budget; complete passes are filtered verdicts served).
         "sybil_lookups_7d": sum(by_day.get("sybil_lookups", {}).values()),
         "sybil_passes_complete_7d": sum(by_day.get("sybil_passes_complete", {}).values()),
+        # M8-delivery Phase A: crowdsourced delivery reports ingested.
+        "delivery_reports_7d": sum(by_day.get("delivery_reports", {}).values()),
     }
 
 
@@ -214,12 +216,15 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="preflight402.stats", description=__doc__)
     parser.add_argument("--json", action="store_true", help="emit the raw stats.v0 JSON")
+    # Injectable clock (hidden): stats windows are relative to now, so tests
+    # with fixed-timestamp fixtures pin it here rather than racing the wall.
+    parser.add_argument("--now", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
     conn = connect(get_settings().db_path)
     try:
         migrate(conn)
-        document = compute_stats(conn)
+        document = compute_stats(conn, now=args.now)
     finally:
         conn.close()
     print(json.dumps(document, indent=2) if args.json else render_text(document))
