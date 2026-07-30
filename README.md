@@ -21,6 +21,15 @@ this is what the verdict actually scores. (Separately, only ~4% of x402 payees
 bind to any ERC-8004 identity at all — so most verdicts run on health, price,
 and handshake, and say so honestly.)
 
+**Why "listed" means little:** across **4.98M probes over 9.24 days** of a
+51,331-endpoint catalog, **two squatting hosts account for 58% of every listed
+x402 endpoint** — one serving a uniform 404 behind a *"This app isn't live
+yet"* placeholder, the other a uniform Cloudflare TLS failure. Strip them out
+and **78% of real endpoints work**; measured per provider, about **one host in
+seven** serves no valid 402. Full methodology, corrections and caveats:
+[docs/checkpoint-m3.md](docs/checkpoint-m3.md) — including why a GET-only
+crawl (ours included, before correction) overstates x402 invalidity ~2×.
+
 ## 30-second quickstart
 
 Point any agent at the hosted MCP endpoint — no wallet, no key, no install:
