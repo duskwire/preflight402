@@ -1,8 +1,10 @@
 # M3 acceptance: continuous-probing checkpoint
 
-**Snapshot: 2026-07-30T04:25:10Z.** Reproduce with
-`scripts/checkpoint_report.py` (see [Reproducing](#reproducing) for why the
-published figures come from raw probes, not that script's rollup shortcut).
+**Snapshot: 2026-08-04T22:01Z — re-measured after the GET-only fix
+(commit abd767a).** Reproduce with `scripts/checkpoint_report.py` (see
+[Reproducing](#reproducing) for why the published figures come from raw probes,
+not that script's rollup shortcut). The superseded pre-fix figures are kept
+inline for traceability, marked *(pre-fix)*.
 
 ## Acceptance: MET
 
@@ -11,9 +13,9 @@ endpoints*. Actual:
 
 | | |
 |---|---|
-| Observation window | 2026-07-20T22:38Z → 2026-07-30T04:25Z (**9.24 days**, uninterrupted) |
-| Probes recorded | **4,982,189** (~566k/day; daily range 561k–567k) |
-| Distinct endpoints probed (rolling 7d) | **38,836** |
+| Observation window | 2026-07-20T22:38Z → 2026-08-04T22:01Z (**15.0 days**, uninterrupted) |
+| Probes recorded | **7,762,432** (~566k/day pre-fix; the POST retry adds a second request on non-402 endpoints) |
+| Distinct endpoints probed (rolling 7d) | **36,520** (38,836 pre-fix — the retry costs throughput) |
 | Catalog under management | 51,331 listed endpoints across 1,985 hosts |
 | Infrastructure | Hetzner VPS, clean DE egress, uncapped scheduler since 2026-07-21 |
 
@@ -29,15 +31,18 @@ commits). Mitigated by `TimeoutStopSec=15` (commit 6169fed).
 yields three legitimate figures that differ by 6×, because the catalog is
 extraordinarily concentrated:
 
-| Unit of analysis | Not usable | 95% CI |
+| Unit of analysis | Not usable (measured) | pre-fix estimate |
 |---|---|---|
-| **Providers (hosts)** — the honest default | **14.2%** (281 of 1,985 hosts) | 12.4–15.8% |
-| Measured endpoints (individually probed) | 10.5% (2,243 of 21,403) | 7.8–13.3% |
-| Registry *listings* (endpoint rows) | 62.7% | 61.5–63.8% |
+| **Providers (hosts)** — the honest default | **13.9%** (276 of 1,983 hosts) | 14.2% [12.4–15.8] |
+| Measured endpoints (individually probed) | 12.7% (2,725 of 21,403) | 10.5% [7.8–13.3] |
+| Registry *listings* (endpoint rows) | 63.6% | 62.7% [61.5–63.8] |
 
-All three are method-corrected (see [The GET-only
-correction](#the-get-only-correction)). The listing-weighted figure is the
-most quotable and the least meaningful: **86% of it is two hostnames.**
+These are now **measured** with the fixed prober, not extrapolated: every one
+of the 21,403 endpoints has been re-probed with the POST retry. Both
+method-corrected estimates landed inside or beside their measured values (the
+provider figure within 0.3pp), which is a good sign for the correction
+methodology. The listing-weighted figure remains the most quotable and the
+least meaningful: **86% of it is two hostnames.**
 
 ### Two squatting hosts are 58% of the "x402 economy"
 
@@ -56,15 +61,21 @@ counts are a poor proxy for the size of the x402 economy.
 
 ### The real ecosystem, measured (21,403 endpoints, 1,983 hosts)
 
-| | endpoints | share |
-|---|---|---|
-| Serving a valid 402 | 16,671 | 77.9% |
-| Zombie — answered, never a valid 402 (raw) | 4,483 | 20.9% |
-| Dead — never answered | 249 | 1.2% |
-| Hosts serving ≥1 valid 402 | 1,502 of 1,983 | 75.7% |
+| | endpoints | share | *(pre-fix)* |
+|---|---|---|---|
+| Serving a valid 402 | **18,678** | **87.3%** | *16,671 / 77.9%* |
+| Zombie — answered, never a valid 402 | **2,353** | **11.0%** | *4,483 / 20.9%* |
+| Dead — never answered | 372 | 1.7% | *249 / 1.2%* |
+| Hosts serving ≥1 valid 402 | **1,707** of 1,983 | **86.1%** | *1,502 / 75.7%* |
 
-Dead breaks down as dns 139, conn_refused 79, timeout 47, tls 5 — real
-failures, not SSRF-blocked rows (zero `blocked` probes in the window).
+**The fix moved 2,007 endpoints and 205 hosts from "broken" to "works".** The
+zombie population fell 47% (4,483 → 2,353) — close to the 55% the correction
+predicted, and lower than the 81% recovery seen in the stratified live sample,
+which is expected: that sample was weighted toward the recoverable buckets.
+
+Dead rose slightly (249 → 372): partly real churn over a 15-day window, partly
+that the retry halves per-endpoint probe throughput, so a transient failure has
+fewer successes to offset it. Zero `blocked` (SSRF-refused) rows in the window.
 
 ## The GET-only correction
 
@@ -90,9 +101,19 @@ serve a valid x402 challenge.** This is not temporal drift — live GET re-probe
 reproduced the recorded status exactly in every bucket; only the HTTP method
 changed. Corrected zombie count ≈ 1,994.
 
-**Consequence beyond this report:** the free preflight is currently returning
-`avoid` for a large class of endpoints that work. See
-[Follow-ups](#follow-ups) — this is the checkpoint's most valuable finding.
+**Consequence beyond this report — the checkpoint's most valuable finding:**
+the free preflight was returning `avoid` for a large class of endpoints that
+work. **Fixed 2026-08-04 (commit abd767a)**; the tables above are re-measured
+with the fixed prober. Post-deploy verification on the live VPS: of the 2,840
+endpoints that served a 402 via the POST retry in the first hours,
+**1,786 had never served a 402 in the entire pre-fix window** — those are
+verdicts that were simply wrong, now right.
+
+Two criticals were caught by adversarial review before this shipped: the broad
+retry set had to be **gated on registry-catalog membership** (applying it to
+arbitrary caller-supplied URLs would have turned the free `/preflight` into an
+attacker-directed POST relay), and a **429 answering the retry** had to trigger
+host backoff instead of being discarded and *resetting* it.
 
 ## Caveats any publication must carry
 
@@ -100,8 +121,9 @@ changed. Corrected zombie count ≈ 1,994.
    listings (29,928 of 34,660) are two hosts, each failing identically across
    every listing. Per provider, 14.2% of 1,985 hosts serve no valid 402.
 2. **Method limitation** (above): any x402 liveness figure from GET-only
-   probing — ours before correction, or anyone else's — overstates invalidity
-   by roughly 2×.
+   probing — ours before the 2026-08-04 fix, or anyone else's — overstates
+   invalidity by roughly 2×. Ours is now measured with the POST retry; most
+   published x402 liveness figures are not, and are not comparable to these.
 3. **What "not usable" excludes**: endpoints answering POST but not GET;
    endpoints reachable only after a redirect; endpoints needing a real request
    body (400/422 to our empty `{}`); auth-gated endpoints. "Valid 402" means
@@ -134,8 +156,8 @@ changed. Corrected zombie count ≈ 1,994.
    on re-run. Always publish the as-of timestamp.
 9. **PulseFeed is NOT corroboration.** Their July 2026 "68% dead or invalid"
    covers a ~2,160-endpoint catalog (CDP Bazaar + 402index) that almost
-   certainly excludes both farms; our comparable non-farm rate is 22.1% raw /
-   10.5% corrected, which *contradicts* 68%. And if they also probe GET-only,
+   certainly excludes both farms; our comparable non-farm rate is 12.7%
+   measured, which *contradicts* 68%. And if they also probe GET-only,
    agreement would be shared-method bias, not convergent validity. The
    67.5%-vs-68% coincidence across incompatible denominators is meaningless.
 
@@ -147,8 +169,13 @@ Two claims, both defensible:
    58.3% of listed endpoints are two servers — one undeployed, one with a
    broken TLS origin — and the median host lists two endpoints.
 2. **Among providers we can measure individually, roughly one in seven serves
-   no valid 402.** A real reliability problem, an order of magnitude smaller
-   than the listing-weighted figure suggests.
+   no valid 402** (13.9%, measured). A real reliability problem, an order of
+   magnitude smaller than the listing-weighted figure suggests.
+3. **Probing method dominates the answer.** Switching from GET-only to a
+   GET-plus-POST probe moved 2,007 endpoints and 205 hosts from "broken" to
+   "works" — a larger effect than any real-world change over the same period.
+   Liveness statistics about x402 are statements about the prober as much as
+   the ecosystem.
 
 ## Follow-ups this checkpoint opened
 
