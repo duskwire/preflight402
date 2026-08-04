@@ -1,4 +1,4 @@
-"""Async HTTP prober: one GET, everything captured, nothing interpreted.
+"""Async HTTP prober: a GET (plus a bounded POST retry), nothing interpreted.
 
 Protocol parsing (x402 v1/v2, MPP) happens downstream in probe.parsers —
 this module only gathers raw material: status, headers, a size-capped body,
@@ -12,6 +12,7 @@ import asyncio
 import socket
 import ssl
 import time
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -21,6 +22,33 @@ import httpx
 from preflight402.probe.tls import TLSInfo, inspect_tls
 
 BODY_CAP_BYTES = 64 * 1024  # 402 payloads are small JSON; never slurp a video
+
+# A GET answered with one of these is retried once as an empty JSON POST.
+#
+# Most x402 endpoints are POST endpoints. Retrying only on 405 (the original
+# behaviour) misses the common case where a POST-only endpoint answers a GET
+# with 404/200/401 instead of a polite 405 — the M3 checkpoint measured ~55%
+# of endpoints we classified "zombie" (answered, never a 402) actually serving
+# a valid 402 on POST: 404-only 55%, 200-only 78%, 401/403 63%
+# (docs/checkpoint-m3.md). Without this we return `avoid` for endpoints that
+# work.
+#
+# Why these statuses and not others: each means "your REQUEST was wrong", so
+# re-asking with the method the endpoint actually implements is a reasonable
+# reinterpretation. 5xx is excluded — it means the SERVER is broken (the
+# checkpoint measured 0/20 recovery) and re-hitting a struggling server is
+# unkind. 3xx is excluded because following redirects would break the SSRF
+# pin (see the module docstring).
+#
+# Side-effect posture: this broad set is for endpoints a REGISTRY advertised as
+# x402 payment endpoints — for those a POST is the request their publisher
+# expects agents to make, we send an empty JSON body and NO payment header, and
+# a compliant endpoint answers 402 before doing any work. It must NOT be applied
+# to arbitrary caller-supplied URLs: service.py gates it on catalog membership
+# so the free /preflight cannot be turned into a relay that POSTs at a victim of
+# the caller's choosing (probe_post_retry_statuses_unlisted, default {405},
+# covers that path). Operators narrow either set via env; [] disables.
+POST_RETRY_STATUSES: frozenset[int] = frozenset({200, 400, 401, 403, 404, 405, 415, 422})
 
 # error values match the probes.error taxonomy documented in db/schema.sql
 _TIMEOUT = "timeout"
@@ -37,7 +65,7 @@ USER_AGENT = "preflight402-probe/0.1 (+https://github.com/duskwire/preflight402)
 class ProbeResult:
     url: str
     ok: bool  # status line + headers arrived, whatever the status
-    method: str = "GET"  # the method that produced this result (POST on 405 fallback)
+    method: str = "GET"  # the method that produced this result (POST via the retry)
     # With ok=False: why no response arrived. With ok=True: a body-read
     # failure after headers arrived (status/headers/partial body retained).
     error: str | None = None  # timeout | dns | tls | conn_refused | protocol | unknown
@@ -48,6 +76,10 @@ class ProbeResult:
     body_truncated: bool = False  # capped, or cut short by a body-read failure
     latency_ms: float | None = None  # request start -> body complete/capped/failed
     tls: TLSInfo | None = None  # None for plain-http URLs
+    # Status a POST retry returned when its result was NOT kept (only a 402 is
+    # kept). Without this the retry is invisible: a 429 telling us to back off
+    # would be silently discarded and the caller would read the GET as fine.
+    retry_status: int | None = None
 
     def db_fields(self) -> dict[str, Any]:
         """Kwargs for db.queries.record_probe (parser-derived fields excluded)."""
@@ -56,6 +88,8 @@ class ProbeResult:
             "error": self.error,
             "http_status": self.http_status,
             "latency_ms": self.latency_ms,
+            "method": self.method,
+            "retry_status": self.retry_status,
             "tls_valid": self.tls.valid if self.tls else None,
             "tls_expires_at": self.tls.expires_at if self.tls else None,
             "tls_issuer": self.tls.issuer if self.tls else None,
@@ -68,13 +102,16 @@ async def probe(
     timeout_s: float = 10.0,
     pinned_ip: str | None = None,
     enforce_pin: bool = False,
+    post_retry_statuses: Collection[int] | None = None,
 ) -> ProbeResult:
     """GET the URL (no redirects followed) and capture what happened.
 
-    A meaningful share of live x402 endpoints only answer POST and 405 a GET,
-    so a GET that returns 405 is retried once with an empty JSON POST — the
-    unpaid request returns the 402 challenge without being processed — and
-    that result is kept when it reveals a 402.
+    Most live x402 endpoints only answer POST, so a GET answered with a
+    "your request was wrong" status (POST_RETRY_STATUSES, overridable per
+    call) is retried once with an empty JSON POST — the unpaid request returns
+    the 402 challenge without being processed. The POST result is kept ONLY
+    when it reveals a 402, so a speculative retry can never downgrade or lose
+    what the GET already established.
 
     When `pinned_ip` is given, both the GET/POST and the TLS handshake connect
     to exactly that address (with the original host preserved for Host and
@@ -108,12 +145,21 @@ async def probe(
         tls_task = asyncio.ensure_future(
             inspect_tls(host, port, timeout_s=timeout_s, pinned_ip=pinned_ip)
         )
+    retry_statuses = POST_RETRY_STATUSES if post_retry_statuses is None else post_retry_statuses
     try:
         result = await _request("GET", url, timeout_s, pinned_ip=pinned_ip)
-        if result.ok and result.http_status == 405:
+        if result.ok and result.http_status in retry_statuses:
             post = await _request("POST", url, timeout_s, json_probe=True, pinned_ip=pinned_ip)
+            # Only a 402 supersedes the GET: the POST is speculative, so a
+            # worse or merely different answer must not overwrite real
+            # evidence (e.g. a healthy 200 GET staying a 200).
             if post.ok and post.http_status == 402:
                 result = post
+            else:
+                # Keep the GET, but never lose what the retry said — a 429 here
+                # means the host is asking us to back off, and callers
+                # (scheduler politeness, auditing) must be able to see it.
+                result.retry_status = post.http_status
     finally:
         # The GET can fail fast (e.g. DNS); still collect the TLS side. The
         # task must never propagate out of this finally, whatever it throws.

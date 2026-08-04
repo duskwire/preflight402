@@ -207,7 +207,7 @@ def test_history_upgrades_verdict_through_the_service(db, tmp_path, monkeypatch)
     )
     service.ensure_migrated.cache_clear()
 
-    async def stubbed_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+    async def stubbed_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False, **_):
         return _payment_probe(url)
 
     monkeypatch.setattr(service, "probe", stubbed_probe)
@@ -266,7 +266,7 @@ def test_first_sight_endpoint_still_cautions(db, tmp_path, monkeypatch) -> None:
     )
     service.ensure_migrated.cache_clear()
 
-    async def stubbed_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+    async def stubbed_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False, **_):
         return _payment_probe(url)
 
     monkeypatch.setattr(service, "probe", stubbed_probe)
@@ -330,7 +330,7 @@ def test_dead_endpoint_flag_surfaces_through_the_service(db, tmp_path, monkeypat
     )
     service.ensure_migrated.cache_clear()
 
-    async def failing_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+    async def failing_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False, **_):
         return ProbeResult(url=url, ok=False, error="timeout")
 
     monkeypatch.setattr(service, "probe", failing_probe)

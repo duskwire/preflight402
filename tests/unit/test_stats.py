@@ -176,7 +176,7 @@ def test_preflight_calls_are_metered(tmp_path, monkeypatch) -> None:
 
     from preflight402.probe.prober import ProbeResult
 
-    async def stub_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+    async def stub_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False, **_):
         return ProbeResult(url=url, ok=True, http_status=200, body="hi")
 
     monkeypatch.setattr(service, "probe", stub_probe)

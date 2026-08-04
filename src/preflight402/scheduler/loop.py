@@ -13,7 +13,9 @@ Politeness model, per host:
   cycles do not open with a thundering herd;
 - an HTTP 429 abandons the rest of the host's group and puts the host in
   exponential backoff (min_interval * 2^level, capped at 1h); any non-429
-  response from the host resets it.
+  response from the host resets it. A 429 answering the POST retry counts
+  too, even though that result is discarded — otherwise a host telling us to
+  back off would read as "ok" and RESET its accumulated backoff.
 
 Every probe is SSRF-guarded exactly like the public /preflight: the target
 must resolve public, and the connection pins to the validated IP. A guard
@@ -223,10 +225,14 @@ class Scheduler:
             timeout_s=settings.probe_timeout_s,
             pinned_ip=pinned_ip,
             enforce_pin=not settings.allow_private_targets,
+            post_retry_statuses=settings.probe_post_retry_statuses,
         )
         detection = detect(result.headers, result.body)
         record_probe_result(conn, endpoint["id"], result, detection)
-        if result.http_status == 429:
+        # A 429 counts whether it came from the GET or from the discarded POST
+        # retry: either way the host is telling us to back off, and treating a
+        # retry-429 as "ok" would RESET accumulated backoff and keep hammering.
+        if result.http_status == 429 or result.retry_status == 429:
             return "rate_limited"
         return "ok" if result.ok else "error"
 

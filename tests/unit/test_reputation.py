@@ -435,7 +435,7 @@ async def test_preflight_populates_reputation_block(tmp_path, monkeypatch) -> No
     }
     headers = {"payment-required": base64.b64encode(json.dumps(payload).encode()).decode()}
 
-    async def stub_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+    async def stub_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False, **_):
         return ProbeResult(
             url=url,
             ok=True,
@@ -463,7 +463,7 @@ async def test_preflight_reputation_null_when_feature_off(tmp_path, monkeypatch)
     from preflight402 import service
     from preflight402.probe.prober import ProbeResult
 
-    async def stub_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+    async def stub_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False, **_):
         return ProbeResult(url=url, ok=True, http_status=200, body="hi")
 
     monkeypatch.setattr(service, "probe", stub_probe)
@@ -502,7 +502,7 @@ async def test_preflight_reputation_error_is_not_a_false_unbound(tmp_path, monke
     }
     headers = {"payment-required": base64.b64encode(json.dumps(payload).encode()).decode()}
 
-    async def stub_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+    async def stub_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False, **_):
         return ProbeResult(
             url=url,
             ok=True,
@@ -556,7 +556,7 @@ def _stub_probe_factory(headers):
     from preflight402.probe.prober import ProbeResult
     from preflight402.probe.tls import TLSInfo
 
-    async def stub_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+    async def stub_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False, **_):
         return ProbeResult(
             url=url,
             ok=True,

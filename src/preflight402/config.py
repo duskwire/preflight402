@@ -88,6 +88,21 @@ class Settings(BaseSettings):
     allow_private_targets: bool = False
     probe_timeout_s: float = 10.0
     probe_concurrency: int = 20
+    # A GET answered with one of these is retried once as an empty JSON POST,
+    # because most x402 endpoints are POST endpoints and a GET-only probe
+    # mislabels them as dead (~55% of "zombie" endpoints actually serve a 402
+    # on POST — docs/checkpoint-m3.md). See probe.prober.POST_RETRY_STATUSES
+    # for the rationale per status and the side-effect posture. Set to [] to
+    # disable the retry entirely, or narrow it e.g. [405] for the old
+    # behaviour. Env takes a JSON list: PREFLIGHT402_PROBE_POST_RETRY_STATUSES=[404,405]
+    # Mirrors probe.prober.POST_RETRY_STATUSES (kept a literal so config does
+    # not import the probe stack; a test pins the two together).
+    probe_post_retry_statuses: frozenset[int] = frozenset({200, 400, 401, 403, 404, 405, 415, 422})
+    # The set used for URLs NO registry advertised — i.e. arbitrary URLs handed
+    # to the free /preflight. Narrow by design: a 405 is the server itself
+    # saying the method was wrong, so retrying POST is its own instruction.
+    # Widening this turns the public endpoint into a caller-directed POST relay.
+    probe_post_retry_statuses_unlisted: frozenset[int] = frozenset({405})
     per_host_min_interval_s: float = 60.0
     scheduler_cycle_s: float = 900.0  # 15-minute loop per the build plan
     # The M3 scheduler is deploy-safe OFF: the home LXC must not start bulk

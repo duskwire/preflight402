@@ -65,7 +65,7 @@ def probe_stub(monkeypatch):
             self.calls: list[str] = []
 
         async def __call__(
-            self, url: str, *, timeout_s: float = 10.0, pinned_ip=None, enforce_pin=False
+            self, url: str, *, timeout_s: float = 10.0, pinned_ip=None, enforce_pin=False, **_
         ) -> ProbeResult:
             self.calls.append(url)
             return self.results.pop(0)
@@ -203,7 +203,7 @@ async def test_service_wires_the_validated_pin_into_the_probe(tmp_path, monkeypa
     async def fake_resolve(host, port, *, allow_private):
         return "203.0.113.5"
 
-    async def fake_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+    async def fake_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False, **_):
         captured["pinned_ip"] = pinned_ip
         captured["enforce_pin"] = enforce_pin
         return ProbeResult(url=url, ok=True, http_status=200, headers={}, body="x", latency_ms=5.0)
@@ -343,7 +343,7 @@ async def test_concurrent_cold_requests_probe_once(client, monkeypatch) -> None:
     calls: list[str] = []
 
     async def slow_probe(
-        url: str, *, timeout_s: float = 10.0, pinned_ip=None, enforce_pin=False
+        url: str, *, timeout_s: float = 10.0, pinned_ip=None, enforce_pin=False, **_
     ) -> ProbeResult:
         calls.append(url)
         await asyncio.sleep(0.05)
@@ -478,3 +478,75 @@ def test_delivery_reports_rejects_oversized_body(client) -> None:
 
 def test_delivery_reports_rejects_invalid_json(client) -> None:
     assert client.post("/delivery-reports", content=b"{not json").status_code == 400
+
+
+def test_unlisted_url_never_gets_the_broad_post_retry(client) -> None:
+    """The public /preflight must not be an attacker-directed POST relay.
+
+    A caller-supplied URL that no registry advertised gets the NARROW set, so
+    a plain 200/404 page never receives a speculative POST from our egress.
+    """
+    import respx
+
+    with respx.mock:
+        respx.get("https://victim.example/publish/topic").mock(
+            return_value=httpx.Response(200, text="topic exists")
+        )
+        victim_post = respx.post("https://victim.example/publish/topic").mock(
+            return_value=httpx.Response(200)
+        )
+        resp = client.get("/preflight", params={"url": "https://victim.example/publish/topic"})
+        assert resp.status_code == 200
+        assert not victim_post.called  # no POST at a caller-chosen victim
+
+
+def test_registry_listed_url_does_get_the_broad_post_retry(client, tmp_path) -> None:
+    """...but a registry-advertised x402 endpoint still gets the fix, which is
+    the whole point: those are the endpoints publishers expect agents to POST."""
+    import respx
+
+    from preflight402.api import rest
+    from preflight402.db import connect, migrate, queries
+
+    conn = connect(rest.settings.db_path)
+    try:
+        migrate(conn)
+        queries.upsert_endpoint(conn, "https://listed.example/pay", source="bazaar")
+    finally:
+        conn.close()
+
+    with respx.mock:
+        respx.get("https://listed.example/pay").mock(return_value=httpx.Response(404))
+        listed_post = respx.post("https://listed.example/pay").mock(
+            return_value=httpx.Response(
+                402, headers={"payment-required": "eyJ4NDAyVmVyc2lvbiI6Mn0="}
+            )
+        )
+        resp = client.get("/preflight", params={"url": "https://listed.example/pay"})
+        assert resp.status_code == 200
+        assert listed_post.called  # the fix applies where it is safe
+        assert resp.json()["health"]["method"] == "POST"
+
+
+def test_caller_seeded_endpoint_does_not_earn_the_broad_set(client) -> None:
+    """An endpoint known ONLY because a caller preflighted (or reported) it is
+    not registry-advertised — it must not unlock the broad set for itself."""
+    import respx
+
+    from preflight402.api import rest
+    from preflight402.db import connect, migrate, queries
+
+    conn = connect(rest.settings.db_path)
+    try:
+        migrate(conn)
+        queries.upsert_endpoint(conn, "https://victim2.example/x", source="preflight")
+        queries.upsert_endpoint(conn, "https://victim3.example/x", source="delivery_report")
+    finally:
+        conn.close()
+
+    with respx.mock:
+        for host in ("victim2", "victim3"):
+            respx.get(f"https://{host}.example/x").mock(return_value=httpx.Response(404))
+            post = respx.post(f"https://{host}.example/x").mock(return_value=httpx.Response(402))
+            client.get("/preflight", params={"url": f"https://{host}.example/x"})
+            assert not post.called, host

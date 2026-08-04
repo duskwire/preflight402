@@ -99,3 +99,19 @@ def test_get_settings_is_cached() -> None:
         assert get_settings() is get_settings()
     finally:
         get_settings.cache_clear()
+
+
+def test_default_post_retry_set_matches_the_prober_constant() -> None:
+    # config.py deliberately does NOT import the probe stack (layering), so the
+    # literal default is pinned here instead of drifting silently.
+    from preflight402.config import Settings
+    from preflight402.probe.prober import POST_RETRY_STATUSES
+
+    assert Settings(_env_file=None).probe_post_retry_statuses == POST_RETRY_STATUSES
+
+
+def test_unlisted_retry_set_is_narrow_by_default() -> None:
+    # The public /preflight relay guard: widening this is a security decision.
+    from preflight402.config import Settings
+
+    assert Settings(_env_file=None).probe_post_retry_statuses_unlisted == frozenset({405})

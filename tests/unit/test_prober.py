@@ -352,6 +352,8 @@ async def test_db_fields_map_onto_record_probe(stub_tls) -> None:
         "error": None,
         "http_status": 402,
         "latency_ms": result.latency_ms,
+        "method": "GET",
+        "retry_status": None,
         "tls_valid": True,
         "tls_expires_at": "2027-01-01T00:00:00.000Z",
         "tls_issuer": "Let's Encrypt",
@@ -363,3 +365,107 @@ async def test_db_fields_map_onto_record_probe(stub_tls) -> None:
 
     accepted = set(inspect.signature(queries.record_probe).parameters)
     assert set(fields) <= accepted
+
+
+# --- the GET-only gap fix (docs/checkpoint-m3.md) -----------------------------
+
+
+@respx.mock
+@pytest.mark.parametrize("status", [200, 400, 401, 403, 404, 415, 422])
+async def test_post_retry_recovers_a_402_from_every_retryable_status(status, stub_tls) -> None:
+    # The M3 checkpoint measured POST-only endpoints answering GET with these
+    # statuses (404 55%, 200 78%, 401/403 63% recovery). Before the fix only
+    # 405 was retried, so all of these were reported as non-payment endpoints.
+    respx.get("https://api.example.com/x").mock(return_value=httpx.Response(status))
+    post = respx.post("https://api.example.com/x").mock(
+        return_value=httpx.Response(402, headers={"payment-required": "eyJ4NDAyVmVyc2lvbiI6Mn0="})
+    )
+    result = await probe("https://api.example.com/x")
+    assert result.http_status == 402
+    assert result.method == "POST"
+    assert post.called
+
+
+@respx.mock
+@pytest.mark.parametrize("status", [500, 502, 503, 301, 302, 307, 308])
+async def test_post_is_not_retried_for_server_errors_or_redirects(status, stub_tls) -> None:
+    # 5xx means the SERVER is broken (checkpoint: 0/20 recovery) and re-hitting
+    # it is unkind; 3xx needs the redirect target, which would break the SSRF
+    # pin — neither is a method problem, so neither is retried.
+    respx.get("https://api.example.com/x").mock(return_value=httpx.Response(status))
+    post = respx.post("https://api.example.com/x").mock(return_value=httpx.Response(402))
+    result = await probe("https://api.example.com/x")
+    assert result.http_status == status
+    assert result.method == "GET"
+    assert not post.called
+
+
+@respx.mock
+async def test_a_402_on_get_is_never_retried(stub_tls) -> None:
+    # The endpoint already answered the question; a speculative POST would be
+    # pure extra load on a working endpoint.
+    respx.get("https://api.example.com/x").mock(return_value=httpx.Response(402))
+    post = respx.post("https://api.example.com/x").mock(return_value=httpx.Response(402))
+    result = await probe("https://api.example.com/x")
+    assert result.method == "GET"
+    assert not post.called
+
+
+@respx.mock
+async def test_speculative_post_never_downgrades_the_get(stub_tls) -> None:
+    # A healthy 200 GET must survive a POST that answers worse — the retry can
+    # only ADD a 402 finding, never replace real evidence.
+    respx.get("https://api.example.com/x").mock(return_value=httpx.Response(200, text="hello"))
+    respx.post("https://api.example.com/x").mock(return_value=httpx.Response(500))
+    result = await probe("https://api.example.com/x")
+    assert result.http_status == 200
+    assert result.method == "GET"
+    assert result.body == "hello"
+
+
+@respx.mock
+async def test_post_retry_statuses_is_configurable_and_disablable(stub_tls) -> None:
+    respx.get("https://api.example.com/x").mock(return_value=httpx.Response(404))
+    post = respx.post("https://api.example.com/x").mock(return_value=httpx.Response(402))
+    # narrowed to the old 405-only behaviour -> no retry on a 404
+    old = await probe("https://api.example.com/x", post_retry_statuses={405})
+    assert old.http_status == 404 and not post.called
+    # fully disabled
+    off = await probe("https://api.example.com/x", post_retry_statuses=frozenset())
+    assert off.http_status == 404 and not post.called
+    # explicitly enabled for 404
+    on = await probe("https://api.example.com/x", post_retry_statuses={404})
+    assert on.http_status == 402 and post.called
+
+
+@respx.mock
+async def test_post_retry_keeps_the_ssrf_pin_and_empty_json_body(stub_tls) -> None:
+    # The retry must not become a hole in the rebinding defence, and must send
+    # the same empty-JSON convention the original 405 path used.
+    respx.get("https://93.184.216.34/x").mock(return_value=httpx.Response(404))
+    post = respx.post("https://93.184.216.34/x").mock(return_value=httpx.Response(402))
+    result = await probe("https://api.example.com/x", pinned_ip="93.184.216.34")
+    assert result.http_status == 402
+    request = post.calls.last.request
+    assert request.content == b"{}"
+    assert request.headers["content-type"] == "application/json"
+    assert request.headers["host"] == "api.example.com"  # pinned IP, original Host
+
+
+@respx.mock
+async def test_discarded_post_retry_status_is_recorded(stub_tls) -> None:
+    # A retry that doesn't yield a 402 must not vanish: a 429 here is the host
+    # asking us to back off, and the scheduler reads retry_status to honour it.
+    respx.get("https://api.example.com/x").mock(return_value=httpx.Response(404))
+    respx.post("https://api.example.com/x").mock(return_value=httpx.Response(429))
+    result = await probe("https://api.example.com/x")
+    assert result.http_status == 404  # GET evidence kept
+    assert result.retry_status == 429  # ...but the retry is visible
+    assert result.db_fields()["retry_status"] == 429
+
+
+@respx.mock
+async def test_no_retry_means_no_retry_status(stub_tls) -> None:
+    respx.get("https://api.example.com/x").mock(return_value=httpx.Response(402))
+    result = await probe("https://api.example.com/x")
+    assert result.retry_status is None  # distinguishes "never retried"

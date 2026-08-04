@@ -109,7 +109,7 @@ def limited_client(tmp_path, monkeypatch):
     monkeypatch.setattr(rest, "_limiter", RateLimiter(per_minute=60, burst=3))
     service.ensure_migrated.cache_clear()
 
-    async def fake_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+    async def fake_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False, **_):
         return ProbeResult(
             url=url,
             ok=True,
@@ -180,7 +180,7 @@ def test_rate_limit_zero_disables(tmp_path, monkeypatch) -> None:
     )
     monkeypatch.setattr(rest, "_limiter", RateLimiter(per_minute=60, burst=1))
 
-    async def fake_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False):
+    async def fake_probe(url, *, timeout_s=10.0, pinned_ip=None, enforce_pin=False, **_):
         return ProbeResult(
             url=url,
             ok=True,

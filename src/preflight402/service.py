@@ -86,6 +86,32 @@ async def get_preflight(url: str, settings: Settings) -> PreflightResult:
         _inflight.pop(canonical, None)
 
 
+# Sources that mean "a caller told us about this URL", as opposed to a registry
+# ingester having found it advertised as an x402 endpoint. An endpoint known
+# only through these is NOT trusted for the broad POST-retry set.
+_CALLER_SOURCES = frozenset({"preflight", "delivery_report"})
+
+
+def _registry_listed(canonical: str, settings: Settings) -> bool:
+    """True when a registry ingester advertised this URL as an x402 endpoint.
+
+    Gate for the broad POST-retry set (see _run_preflight). Never raises: a
+    lookup failure degrades to the narrow, safer set.
+    """
+    try:
+        conn = connect(settings.db_path)
+        try:
+            row = queries.get_endpoint(conn, canonical)
+        finally:
+            conn.close()
+    except Exception:
+        return False
+    if row is None:
+        return False
+    sources = row.get("sources") or []
+    return any(source not in _CALLER_SOURCES for source in sources)
+
+
 def _cached_document(canonical: str, settings: Settings) -> dict[str, Any] | None:
     conn = connect(settings.db_path)
     try:
@@ -106,11 +132,24 @@ async def _run_preflight(
     pinned_ip: str | None = None,
     enforce_pin: bool = False,
 ) -> dict[str, Any]:
+    # The broad POST-retry set is only safe for endpoints a REGISTRY advertised
+    # as x402 payment endpoints — for those, a POST is the request their
+    # publisher expects agents to make. /preflight takes ANY caller-supplied
+    # URL, so applying it there would turn this free, unauthenticated endpoint
+    # into a relay that POSTs {} at a victim of the caller's choosing. Unlisted
+    # URLs therefore get the narrow set (405 only: the server itself said the
+    # method was wrong).
+    retry_statuses = (
+        settings.probe_post_retry_statuses
+        if _registry_listed(canonical, settings)
+        else settings.probe_post_retry_statuses_unlisted
+    )
     result = await probe(
         canonical,
         timeout_s=settings.probe_timeout_s,
         pinned_ip=pinned_ip,
         enforce_pin=enforce_pin,
+        post_retry_statuses=retry_statuses,
     )
     detection = detect(result.headers, result.body)
     conn = connect(settings.db_path)

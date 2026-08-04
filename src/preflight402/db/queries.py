@@ -227,6 +227,8 @@ def record_probe(
     error: str | None = None,
     http_status: int | None = None,
     latency_ms: float | None = None,
+    method: str | None = None,
+    retry_status: int | None = None,
     tls_valid: bool | None = None,
     tls_expires_at: str | None = None,
     tls_issuer: str | None = None,
@@ -246,9 +248,9 @@ def record_probe(
     with transaction(conn):
         cursor = conn.execute(
             "INSERT INTO probes (endpoint_id, probed_at, ok, error, http_status, latency_ms,"
-            " tls_valid, tls_expires_at, tls_issuer, is_402, protocol, spec_compliant,"
-            " warnings, payment)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " method, retry_status, tls_valid, tls_expires_at, tls_issuer, is_402, protocol,"
+            " spec_compliant, warnings, payment)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 endpoint_id,
                 now,
@@ -256,6 +258,8 @@ def record_probe(
                 error,
                 http_status,
                 latency_ms,
+                method,
+                retry_status,
                 tls_valid,
                 tls_expires_at,
                 tls_issuer,
