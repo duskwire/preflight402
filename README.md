@@ -26,9 +26,10 @@ and handshake, and say so honestly.)
 x402 endpoint** — one serving a uniform 404 behind a *"This app isn't live
 yet"* placeholder, the other a uniform Cloudflare TLS failure. Strip them out
 and **87% of real endpoints work**; measured per provider, about **one host in
-seven** (13.9%) serves no valid 402. Full methodology, corrections and caveats:
-[docs/checkpoint-m3.md](docs/checkpoint-m3.md) — including why a GET-only
-crawl (ours included, before correction) overstates x402 invalidity ~2×.
+seven** (13.9%) serves no valid 402. Read the findings:
+**[What 7.8M probes say about the x402 economy](docs/findings-x402-catalog.md)**
+— including why a GET-only crawl (ours included, before we fixed it) overstates
+x402 invalidity ~2×. Full method and caveats: [docs/checkpoint-m3.md](docs/checkpoint-m3.md).
 
 ## 30-second quickstart
 
