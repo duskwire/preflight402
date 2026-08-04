@@ -152,13 +152,27 @@ Two claims, both defensible:
 
 ## Follow-ups this checkpoint opened
 
-- **[product bug] Broaden the POST fallback.** Retrying POST only on 405
-  mislabels ~55% of "zombies". Tradeoff to weigh before changing: POSTing to
-  arbitrary endpoints on 404/200/401 widens side-effect risk and roughly
-  doubles probe volume. Options: POST-retry on a wider status set, or a
-  slower second-opinion pass for endpoints classified zombie.
+- **[product bug] Broaden the POST fallback — ✅ FIXED 2026-08-04 (commit
+  abd767a), live on both hosts.** The retry now fires on a configurable status
+  set (200/400/401/403/404/405/415/422); 5xx and 3xx stay excluded. Live
+  re-probing of 47 endpoints classified "zombie" recovered **38 (80.9%)** —
+  higher than the 55% estimate above — and in the first minute after deploy the
+  VPS recorded **431 endpoints returning a valid 402 via POST** that GET-only
+  probing had written off. Two criticals were caught by adversarial review
+  before shipping: the broad set is **gated on registry-catalog membership**
+  (applying it to arbitrary caller-supplied URLs would have made the free
+  `/preflight` an attacker-directed POST relay; unlisted URLs get `{405}`), and
+  a **429 answering the retry now triggers host backoff** instead of being
+  discarded and *resetting* it. `probes.method` + `probes.retry_status`
+  (migration 0005) make the retry auditable.
+  **⚠️ The numbers in this report predate the fix and understate liveness.**
 - **[product bug] Follow redirects (or record the target).** 40% of 3xx-only
-  endpoints serve a 402 at the redirect target.
+  endpoints serve a 402 at the redirect target. Still open — needs revalidation
+  of the redirect target against the SSRF guard, so it is not a one-liner.
+- **[ops] Migrations cost a whole-database scan.** Deploying 0003+0004+0005 to
+  the 7.9GB VPS DB took ~9 minutes of downtime: `migrate()` runs
+  `PRAGMA foreign_key_check` over the entire database before every COMMIT, even
+  for a pure `ADD COLUMN`. Logged as a follow-up task.
 - **[minor] Ingest filter misses percent-encoded templates.**
   `TEMPLATE_SEGMENT` matches `/:param` and `/{param}` but not `/%7Bid%7D`
   (175 listings).
